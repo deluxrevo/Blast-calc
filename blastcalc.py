@@ -23,62 +23,63 @@ st.markdown("""
 # --- SIDEBAR: INPUTS ---
 st.sidebar.title("🎛️ Blast Parameters")
 
-st.sidebar.subheader("1. Geology & Production")
-target_tons = st.sidebar.number_input("Target Tonnage (Tons)", min_value=1000, value=12000, step=500)
-rock_condition = st.sidebar.selectbox("Rock Type", 
-                                 ["Mix: Schist/Quartzite (Standard)", "HARD: Dolerite/Basalt (Tough)"],
-                                 help="Select HARD if you are seeing black rock and breakage.")
-
-st.sidebar.subheader("2. Bench Geometry")
-bench_height = st.sidebar.slider("Bench Height (m)", 6.0, 15.0, 10.0, help="10m-12m is best. 6m is inefficient.")
-hole_diameter = st.sidebar.selectbox("Hole Diameter (mm)", [76, 89, 102], index=1)
+st.sidebar.header("1. Production Targets")
+target_tons = st.sidebar.number_input("Target Tonnage (Tons)", min_value=1000, value=20000, step=500)
 rock_density = st.sidebar.number_input("Rock Density (t/m3)", value=2.7, step=0.1)
 
-st.sidebar.subheader("3. Unit Costs (HT)")
+st.sidebar.header("2. Drill Pattern (Geometry)")
+# Default values set to your "Standard" 3x3
+burden = st.sidebar.number_input("Burden (m)", min_value=1.5, max_value=6.0, value=3.0, step=0.1, help="Distance from free face. Keep tight for hard rock!")
+spacing = st.sidebar.number_input("Spacing (m)", min_value=1.5, max_value=7.0, value=3.0, step=0.1, help="Distance between holes. Should be 1.0x to 1.3x Burden.")
+bench_height = st.sidebar.slider("Bench Height (m)", 6.0, 15.0, 10.0, help="10m-12m is best. 6m is inefficient.")
+hole_diameter = st.sidebar.selectbox("Hole Diameter (mm)", [76, 89, 102], index=1)
+
+st.sidebar.header("3. Loading Design")
+pf_target = st.sidebar.number_input("Target Powder Factor (kg/m3)", min_value=0.15, max_value=1.0, value=0.55, step=0.01, help="0.55 = Standard. 0.45 = Economy (Schist). 0.65 = Hard (Dolerite).")
+sub_drill = st.sidebar.number_input("Sub-Drill (Surforation) (m)", value=1.0, step=0.1, help="Usually 1.0m. Increase to 1.2m for hard toes.")
+stemming_m = st.sidebar.number_input("Stemming Height (m)", value=2.5, step=0.1, help="Gravel at top. Usually 20-30x Diameter.")
+
+st.sidebar.header("4. Unit Costs (HT)")
 cost_drill_m = st.sidebar.number_input("Drilling (MAD/m)", value=28.0)
 cost_ammonix = st.sidebar.number_input("Ammonix (MAD/kg)", value=17.55)
 cost_emulsion = st.sidebar.number_input("Emulsion (MAD/kg)", value=46.00)
 cost_detonator = st.sidebar.number_input("Detonator (Unit)", value=68.00)
 
-st.sidebar.subheader("4. Fixed Fees (Per Blast)")
-fixed_fees = st.sidebar.number_input("Transport/Guard/Service (MAD)", value=7000.0, help="Add Prestation, Transport, CIS here.")
+st.sidebar.header("5. Fixed Fees")
+fixed_fees = st.sidebar.number_input("Transport/Guard/Service (MAD)", value=7000.0)
 
 # --- LOGIC ENGINE ---
 
-# Geology Logic
-if rock_condition == "Mix: Schist/Quartzite (Standard)":
-    burden = 3.0
-    spacing = 3.0
-    pf_target = 0.55  # kg/m3
-    stemming_m = 2.5
-    sub_drill = 1.0
-    rock_note = "Standard Pattern (3x3). Good for Mix."
-else: # Hard Dolerite
-    burden = 2.7  # Tighter!
-    spacing = 3.0
-    pf_target = 0.65  # Higher Energy!
-    stemming_m = 2.2
-    sub_drill = 1.2
-    rock_note = "Tight Pattern (2.7x3.0). Required for Hard Black Rock."
-
-# Calculations
+# 1. Geometry Calculations
 hole_depth = bench_height + sub_drill
-vol_solid_per_hole = burden * spacing * bench_height
-mass_per_hole = vol_solid_per_hole * rock_density
+vol_solid_per_hole = burden * spacing * bench_height  # This is the REAL volume per hole
+tonnage_per_hole = vol_solid_per_hole * rock_density
 
-# Explosives
-total_explosive_target = vol_solid_per_hole * pf_target
-emulsion_per_hole = 5.0 # Fixed booster
+# 2. Explosive Load Calculation
+total_explosive_target = vol_solid_per_hole * pf_target # Total kg needed per hole
+emulsion_per_hole = 5.0 # Fixed booster (approx 1 cartridge + bottom load)
 ammonix_per_hole = total_explosive_target - emulsion_per_hole
 
-# Fleet
-num_holes = int(np.ceil(target_tons / mass_per_hole))
+# Check if hole can physically hold this much explosive
+# Cylinder vol - stemming - booster
+charge_length_available = hole_depth - stemming_m - 0.5 
+# Approx linear density for 89mm hole (kg/m) ~ 5-6 kg/m depending on density
+linear_charge_density = (np.pi * ((hole_diameter/1000)/2)**2) * 850 # 0.85 g/cc density for Ammonix roughly
+max_ammo_capacity = charge_length_available * linear_charge_density
+
+# If calculated need > capacity, warn user
+capacity_warning = ""
+if ammonix_per_hole > max_ammo_capacity:
+    capacity_warning = f"⚠️ Warning: Hole diameter {hole_diameter}mm is too small for {pf_target} PF. Can only fit {max_ammo_capacity:.1f}kg vs {ammonix_per_hole:.1f}kg needed."
+
+# 3. Fleet & Totals
+num_holes = int(np.ceil(target_tons / tonnage_per_hole))
 total_drill_meters = num_holes * hole_depth
 total_ammonix = num_holes * ammonix_per_hole
 total_emulsion = num_holes * emulsion_per_hole
 total_volume_rock = num_holes * vol_solid_per_hole
 
-# Financials
+# 4. Financials
 c_drill = total_drill_meters * cost_drill_m
 c_ammo = total_ammonix * cost_ammonix
 c_emul = total_emulsion * cost_emulsion
@@ -112,7 +113,6 @@ def create_pattern_plot(rows, cols, num_holes, burden, spacing):
     ax.set_xlabel("Face Width (m)")
     ax.set_ylabel("Distance Back (m)")
     ax.grid(True, linestyle=':', alpha=0.6)
-    # ax.legend(fontsize='small')
     return fig
 
 def create_hole_profile(depth, sub, stem, ammo_h):
@@ -128,7 +128,6 @@ def create_hole_profile(depth, sub, stem, ammo_h):
     ax.set_xlim(-1, 1)
     ax.set_ylabel("Meters")
     ax.set_xticks([])
-    # ax.legend(loc='upper right', fontsize='x-small')
     ax.set_title("Hole", fontsize=10)
     return fig
 
@@ -138,26 +137,26 @@ cols = int(np.ceil(num_holes / rows)) + 1
 fig_pattern = create_pattern_plot(rows, cols, num_holes, burden, spacing)
 fig_profile = create_hole_profile(hole_depth, sub_drill, stemming_m, hole_depth - stemming_m - sub_drill - 0.5)
 
-# --- PDF GENERATION FUNCTION (SINGLE PAGE) ---
+# --- PDF GENERATION FUNCTION ---
 def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_depth, 
-                 sub_drill, stemming, ammo_kg, emul_kg, drill_m, total_ht, total_ttc):
+                 sub_drill, stemming, ammo_kg, emul_kg, drill_m, total_ht, total_ttc, pf, t_tons):
     
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
     elements = []
     styles = getSampleStyleSheet()
     
-    # 1. HEADER (Title & Project Info)
+    # 1. HEADER
     title_style = ParagraphStyle('TitleCustom', parent=styles['Title'], fontSize=16, spaceAfter=10, textColor=colors.darkblue)
     elements.append(Paragraph("BLAST ENGINEERING ORDER (ORDRE DE TIR)", title_style))
-    elements.append(Paragraph(f"<b>Project:</b> Benslimane Quarry | <b>Rock:</b> {rock_condition}", styles['Normal']))
-    elements.append(Paragraph(f"<b>Date:</b> {pd.Timestamp.now().strftime('%Y-%m-%d')} | <b>Target:</b> {target_tons:,.0f} Tons", styles['Normal']))
+    elements.append(Paragraph(f"<b>Project:</b> Benslimane Quarry | <b>Custom Design</b>", styles['Normal']))
+    elements.append(Paragraph(f"<b>Date:</b> {pd.Timestamp.now().strftime('%Y-%m-%d')} | <b>Target:</b> {t_tons:,.0f} Tons", styles['Normal']))
     elements.append(Spacer(1, 15))
 
     # 2. KEY METRICS BOX
     summary_data = [
         ["TOTAL HOLES", "HOLE DEPTH", "PATTERN", "POWDER FACTOR"],
-        [f"{num_holes}", f"{hole_depth} m", f"{burden}m x {spacing}m", f"{pf_target} kg/m³"]
+        [f"{num_holes}", f"{hole_depth} m", f"{burden}m x {spacing}m", f"{pf} kg/m³"]
     ]
     t_summary = Table(summary_data, colWidths=[120, 100, 120, 120])
     t_summary.setStyle(TableStyle([
@@ -171,8 +170,7 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
     elements.append(t_summary)
     elements.append(Spacer(1, 15))
 
-    # 3. IMAGES TABLE (Side-by-Side)
-    # Save figures to buffers
+    # 3. IMAGES
     img_buf1 = BytesIO()
     pattern_fig.savefig(img_buf1, format='png', dpi=100, bbox_inches='tight')
     img_buf1.seek(0)
@@ -181,9 +179,6 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
     profile_fig.savefig(img_buf2, format='png', dpi=100, bbox_inches='tight')
     img_buf2.seek(0)
     
-    # Create Table with images
-    # Left: Pattern, Right: Profile
-    # Use Image class from reportlab
     img1 = Image(img_buf1, width=320, height=220)
     img2 = Image(img_buf2, width=100, height=220)
     
@@ -196,18 +191,18 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
     ]))
     elements.append(t_images)
     
-    # 4. LOADING INSTRUCTIONS (Text under images)
+    # 4. INSTRUCTIONS
     instr_text = f"""
     <font size=11><b>LOADING INSTRUCTIONS (INSTRUCTIONS DE CHARGEMENT):</b></font><br/>
-    1. <b>Sub-Drill (Surforation):</b> {sub_drill} m <font color=red>(Do not stop early!)</font><br/>
-    2. <b>Booster:</b> 1 Emulsion Cartridge at the very bottom.<br/>
+    1. <b>Sub-Drill (Surforation):</b> {sub_drill} m <font color=red>(Critical for Floor!)</font><br/>
+    2. <b>Booster:</b> 1 Emulsion Cartridge at bottom.<br/>
     3. <b>Explosive Column:</b> {hole_depth - stemming - sub_drill - 0.5:.1f} m of Ammonix.<br/>
-    4. <b>Stemming (Bourrage):</b> {stemming} m <font color=red><b>(GRAVEL ONLY 4/10mm - NO DUST!)</b></font>
+    4. <b>Stemming (Bourrage):</b> {stemming} m <font color=red><b>(CLEAN GRAVEL ONLY)</b></font>
     """
     elements.append(Paragraph(instr_text, styles['Normal']))
     elements.append(Spacer(1, 15))
 
-    # 5. FINANCIAL TABLE
+    # 5. COSTS
     elements.append(Paragraph("<b>ESTIMATED COST BREAKDOWN (DEVIS)</b>", styles['Heading4']))
     cost_data = [
         ["ITEM", "QUANTITY", "UNIT PRICE", "TOTAL (HT)"],
@@ -236,20 +231,24 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
 
 # --- MAIN DASHBOARD LAYOUT ---
 st.title("🚀 Quarry Blast Optimizer")
-st.caption("Professional Engineering Tool for Schist/Quartzite/Dolerite Mix")
+st.caption("Advanced Custom Design Mode")
 
 # Top Metrics
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Production", f"{target_tons:,.0f} T")
-m2.metric("Drill Pattern", f"{burden}m x {spacing}m")
+m2.metric("Pattern", f"{burden}m x {spacing}m")
 m3.metric("Explosives", f"{total_ammonix+total_emulsion:,.0f} kg")
 m4.metric("Cost TTC", f"{total_ttc:,.0f} MAD")
 
-# Warning Logic
+# Warnings
+if capacity_warning:
+    st.error(capacity_warning)
 if bench_height < 9.0:
-    st.error("⚠️ WARNING: Bench Height < 9m. Shallow holes (6m) waste 40% of energy. Drill deeper!")
-if rock_condition == "HARD: Dolerite/Basalt (Tough)" and burden > 2.8:
-    st.warning("⚠️ High Risk: Burden > 2.8m in Dolerite creates Boulders.")
+    st.warning("⚠️ Bench Height < 9m. Efficiency drops significantly below 10m.")
+if burden > 3.5:
+    st.warning("⚠️ Wide Pattern Alert: Burden > 3.5m risks boulders in hard rock.")
+if pf_target < 0.35:
+    st.error("⛔ DANGER: Powder Factor < 0.35. Guaranteed Boulders/Toes.")
 
 # Tabs
 tab1, tab2, tab3 = st.tabs(["📊 Visual Plan", "💰 Cost Breakdown", "📄 PDF Report"])
@@ -260,7 +259,7 @@ with tab1:
         st.pyplot(fig_pattern)
     with c2:
         st.pyplot(fig_profile)
-        st.info(f"**Instructions:**\n\n1. Drill {hole_depth}m.\n2. Stemming: {stemming_m}m (Gravel only).\n3. Paint spots {burden}m apart.")
+        st.info(f"**Quick Stats:**\n\n- Holes: {num_holes}\n- Meters: {total_drill_meters:,.0f}m\n- PF: {pf_target} kg/m³")
 
 with tab2:
     st.dataframe(pd.DataFrame({
@@ -269,20 +268,20 @@ with tab2:
         "% of Budget": [c_drill/total_ht*100, c_ammo/total_ht*100, c_emul/total_ht*100, c_acc/total_ht*100, fixed_fees/total_ht*100]
     }).style.format({"Cost (HT)": "{:,.0f} MAD", "% of Budget": "{:.1f}%"}))
     
-    st.success(f"**Cost Per Ton: {cost_per_ton:.2f} MAD/ton**")
+    st.success(f"**Unit Cost: {cost_per_ton:.2f} MAD/ton**")
 
 with tab3:
     st.write("### Generate Official Report")
-    st.write("Click below to download the 1-Page Official Order.")
+    st.write("Click below to download the Order.")
     
     if st.button("📄 Generate PDF Report", key="pdf_btn"):
         pdf_file = generate_pdf(fig_pattern, fig_profile, num_holes, burden, spacing, 
                                 hole_depth, sub_drill, stemming_m, total_ammonix, 
-                                total_emulsion, total_drill_meters, total_ht, total_ttc)
+                                total_emulsion, total_drill_meters, total_ht, total_ttc, pf_target, target_tons)
         
         st.download_button(
-            label="⬇️ Download Official Order",
+            label="⬇️ Download Custom Order",
             data=pdf_file,
-            file_name=f"Blast_Order_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
+            file_name=f"Blast_Order_{burden}x{spacing}_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
             mime="application/pdf"
         )

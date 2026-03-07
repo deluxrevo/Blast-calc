@@ -90,7 +90,7 @@ cost_per_ton = total_ht / target_tons
 # --- PLOTTING FUNCTIONS ---
 
 def create_pattern_plot(rows, cols, num_holes, burden, spacing):
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(6, 4))
     hole_count = 0
     x_coords = []
     y_coords = []
@@ -105,18 +105,18 @@ def create_pattern_plot(rows, cols, num_holes, burden, spacing):
                 y_coords.append(y)
                 hole_count += 1
                 
-    ax.scatter(x_coords, y_coords, c='red', s=80, edgecolors='black', zorder=3)
+    ax.scatter(x_coords, y_coords, c='red', s=50, edgecolors='black', zorder=3)
     # Draw Free Face
     ax.axhline(y=burden*0.5, color='blue', linestyle='--', linewidth=2, label="Free Face")
-    ax.set_title(f"Drill Pattern: {burden}m x {spacing}m (Staggered)", fontsize=10)
+    ax.set_title(f"Drill Pattern: {burden}m x {spacing}m", fontsize=10)
     ax.set_xlabel("Face Width (m)")
     ax.set_ylabel("Distance Back (m)")
     ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend()
+    # ax.legend(fontsize='small')
     return fig
 
 def create_hole_profile(depth, sub, stem, ammo_h):
-    fig, ax = plt.subplots(figsize=(3, 6))
+    fig, ax = plt.subplots(figsize=(2, 6))
     width = 1
     # Layers
     ax.bar(0, sub, bottom=0, width=width, color='black', label='Sub-drill')
@@ -128,8 +128,8 @@ def create_hole_profile(depth, sub, stem, ammo_h):
     ax.set_xlim(-1, 1)
     ax.set_ylabel("Meters")
     ax.set_xticks([])
-    ax.legend(loc='upper right', fontsize='small')
-    ax.set_title("Hole Charge", fontsize=10)
+    # ax.legend(loc='upper right', fontsize='x-small')
+    ax.set_title("Hole", fontsize=10)
     return fig
 
 # Generate Plots
@@ -138,24 +138,23 @@ cols = int(np.ceil(num_holes / rows)) + 1
 fig_pattern = create_pattern_plot(rows, cols, num_holes, burden, spacing)
 fig_profile = create_hole_profile(hole_depth, sub_drill, stemming_m, hole_depth - stemming_m - sub_drill - 0.5)
 
-# --- REPLACE THE ENTIRE generate_pdf FUNCTION WITH THIS ---
-
+# --- PDF GENERATION FUNCTION (SINGLE PAGE) ---
 def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_depth, 
                  sub_drill, stemming, ammo_kg, emul_kg, drill_m, total_ht, total_ttc):
     
     buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
     elements = []
     styles = getSampleStyleSheet()
     
     # 1. HEADER (Title & Project Info)
-    title_style = ParagraphStyle('TitleCustom', parent=styles['Title'], fontSize=18, spaceAfter=12)
+    title_style = ParagraphStyle('TitleCustom', parent=styles['Title'], fontSize=16, spaceAfter=10, textColor=colors.darkblue)
     elements.append(Paragraph("BLAST ENGINEERING ORDER (ORDRE DE TIR)", title_style))
     elements.append(Paragraph(f"<b>Project:</b> Benslimane Quarry | <b>Rock:</b> {rock_condition}", styles['Normal']))
     elements.append(Paragraph(f"<b>Date:</b> {pd.Timestamp.now().strftime('%Y-%m-%d')} | <b>Target:</b> {target_tons:,.0f} Tons", styles['Normal']))
-    elements.append(Spacer(1, 20))
+    elements.append(Spacer(1, 15))
 
-    # 2. KEY METRICS (Top Summary Box)
+    # 2. KEY METRICS BOX
     summary_data = [
         ["TOTAL HOLES", "HOLE DEPTH", "PATTERN", "POWDER FACTOR"],
         [f"{num_holes}", f"{hole_depth} m", f"{burden}m x {spacing}m", f"{pf_target} kg/m³"]
@@ -166,14 +165,14 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
         ('GRID', (0,0), (-1,-1), 1, colors.black),
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-        ('SIZE', (0,0), (-1,-1), 10),
-        ('PADDING', (0,0), (-1,-1), 6),
+        ('SIZE', (0,0), (-1,-1), 9),
+        ('PADDING', (0,0), (-1,-1), 8),
     ]))
     elements.append(t_summary)
-    elements.append(Spacer(1, 20))
+    elements.append(Spacer(1, 15))
 
-    # 3. IMAGES (Side-by-Side: Pattern Left | Profile Right)
-    # Convert Plots to Images
+    # 3. IMAGES TABLE (Side-by-Side)
+    # Save figures to buffers
     img_buf1 = BytesIO()
     pattern_fig.savefig(img_buf1, format='png', dpi=100, bbox_inches='tight')
     img_buf1.seek(0)
@@ -182,41 +181,43 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
     profile_fig.savefig(img_buf2, format='png', dpi=100, bbox_inches='tight')
     img_buf2.seek(0)
     
-    # Create a Table to hold images side-by-side
-    img_table_data = [[Image(img_buf1, width=300, height=200), Image(img_buf2, width=150, height=250)]]
-    t_images = Table(img_table_data, colWidths=[320, 180])
+    # Create Table with images
+    # Left: Pattern, Right: Profile
+    # Use Image class from reportlab
+    img1 = Image(img_buf1, width=320, height=220)
+    img2 = Image(img_buf2, width=100, height=220)
+    
+    img_data = [[img1, img2]]
+    t_images = Table(img_data, colWidths=[350, 150])
     t_images.setStyle(TableStyle([
-        ('VALIGN', (0,0), (-1,-1), 'TOP'),
-        ('ALIGN', (0,0), (0,0), 'LEFT'),  # Align Pattern Left
-        ('ALIGN', (1,0), (1,0), 'RIGHT') # Align Profile Right
+        ('ALIGN', (0,0), (0,0), 'CENTER'),
+        ('ALIGN', (1,0), (1,0), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
     elements.append(t_images)
-    elements.append(Spacer(1, 10))
-
-    # 4. LOADING INSTRUCTIONS (Text under the Profile)
-    instr_style = ParagraphStyle('Instr', parent=styles['Normal'], fontSize=10, leading=14)
-    instructions = f"""
-    <b>LOADING INSTRUCTIONS:</b><br/>
-    • <b>Sub-Drill (Surforation):</b> {sub_drill} m (Essential for Toe)<br/>
-    • <b>Stemming (Bourrage):</b> {stemming} m (GRAVEL ONLY - NO DIRT)<br/>
-    • <b>Explosive Column:</b> {hole_depth - stemming - sub_drill - 0.5:.1f} m<br/>
-    • <b>Booster:</b> 1 Emulsion Cartridge at Bottom.<br/>
-    • <b>Main Charge:</b> {ammo_kg / num_holes:.1f} kg Ammonix per hole.
+    
+    # 4. LOADING INSTRUCTIONS (Text under images)
+    instr_text = f"""
+    <font size=11><b>LOADING INSTRUCTIONS (INSTRUCTIONS DE CHARGEMENT):</b></font><br/>
+    1. <b>Sub-Drill (Surforation):</b> {sub_drill} m <font color=red>(Do not stop early!)</font><br/>
+    2. <b>Booster:</b> 1 Emulsion Cartridge at the very bottom.<br/>
+    3. <b>Explosive Column:</b> {hole_depth - stemming - sub_drill - 0.5:.1f} m of Ammonix.<br/>
+    4. <b>Stemming (Bourrage):</b> {stemming} m <font color=red><b>(GRAVEL ONLY 4/10mm - NO DUST!)</b></font>
     """
-    elements.append(Paragraph(instructions, instr_style))
-    elements.append(Spacer(1, 20))
+    elements.append(Paragraph(instr_text, styles['Normal']))
+    elements.append(Spacer(1, 15))
 
-    # 5. FINANCIAL TABLE (Bottom)
+    # 5. FINANCIAL TABLE
     elements.append(Paragraph("<b>ESTIMATED COST BREAKDOWN (DEVIS)</b>", styles['Heading4']))
     cost_data = [
         ["ITEM", "QUANTITY", "UNIT PRICE", "TOTAL (HT)"],
         ["Drilling (Forage)", f"{drill_m:,.0f} m", f"{cost_drill_m} DH", f"{c_drill:,.0f}"],
         ["Ammonix", f"{ammo_kg:,.0f} kg", f"{cost_ammonix} DH", f"{c_ammo:,.0f}"],
         ["Emulsion", f"{emul_kg:,.0f} kg", f"{cost_emulsion} DH", f"{c_emul:,.0f}"],
-        ["Accessories (Det/Fil)", f"{num_holes} u", "Var", f"{c_acc:,.0f}"],
-        ["Fixed Fees (Transport/CIS)", "1", f"{fixed_fees} DH", f"{fixed_fees:,.0f}"],
+        ["Accessories", f"{num_holes} u", "Var", f"{c_acc:,.0f}"],
+        ["Fixed Fees", "1", f"{fixed_fees} DH", f"{fixed_fees:,.0f}"],
         ["<b>TOTAL HT</b>", "", "", f"<b>{total_ht:,.0f} DH</b>"],
-        ["<b>TOTAL TTC (20%)</b>", "", "", f"<b>{total_ttc:,.0f} DH</b>"]
+        ["<b>TOTAL TTC</b>", "", "", f"<b>{total_ttc:,.0f} DH</b>"]
     ]
     t_cost = Table(cost_data, colWidths=[140, 100, 100, 120])
     t_cost.setStyle(TableStyle([
@@ -224,28 +225,14 @@ def generate_pdf(pattern_fig, profile_fig, num_holes, burden, spacing, hole_dept
         ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('BACKGROUND', (0,6), (-1,7), colors.lightblue), # Highlight Totals
+        ('BACKGROUND', (0,6), (-1,7), colors.lightblue),
         ('FONTNAME', (0,6), (-1,7), 'Helvetica-Bold'),
     ]))
     elements.append(t_cost)
 
-    # Build PDF
     doc.build(elements)
     buffer.seek(0)
     return buffer
-
-# --- UPDATE THE BUTTON CALL IN MAIN APP ---
-if st.button("📄 Generate PDF Report"):
-    pdf_file = generate_pdf(fig_pattern, fig_profile, num_holes, burden, spacing, 
-                            hole_depth, sub_drill, stemming_m, total_ammonix, 
-                            total_emulsion, total_drill_meters, total_ht, total_ttc)
-    
-    st.download_button(
-        label="⬇️ Download Official Order",
-        data=pdf_file,
-        file_name=f"Blast_Order_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
-        mime="application/pdf"
-    )
 
 # --- MAIN DASHBOARD LAYOUT ---
 st.title("🚀 Quarry Blast Optimizer")
@@ -286,13 +273,16 @@ with tab2:
 
 with tab3:
     st.write("### Generate Official Report")
-    st.write("Click below to download the PDF. You can email this file directly to your team.")
+    st.write("Click below to download the 1-Page Official Order.")
     
-    if st.button("📄 Generate PDF Report"):
-        pdf_file = generate_pdf()
+    if st.button("📄 Generate PDF Report", key="pdf_btn"):
+        pdf_file = generate_pdf(fig_pattern, fig_profile, num_holes, burden, spacing, 
+                                hole_depth, sub_drill, stemming_m, total_ammonix, 
+                                total_emulsion, total_drill_meters, total_ht, total_ttc)
+        
         st.download_button(
-            label="⬇️ Download PDF",
+            label="⬇️ Download Official Order",
             data=pdf_file,
-            file_name="Blast_Plan_Benslimane.pdf",
+            file_name=f"Blast_Order_{pd.Timestamp.now().strftime('%Y%m%d')}.pdf",
             mime="application/pdf"
         )

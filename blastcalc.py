@@ -37,27 +37,31 @@ if geology_type == "Gréso-Pélitique (Viséen)":
     rec_burden = 3.0
     rock_desc = "Roche Mixte (Dure/Tendre). Risque de fines argileuses."
     abrasivity = "Moyenne"
+    density_val = 2.7
 elif geology_type == "Psammites (Ordovicien)":
     rec_pf = 0.65
     rec_burden = 2.8
     rock_desc = "Roche TRÈS DURE et Abrasive. Foration difficile."
     abrasivity = "Haute"
+    density_val = 2.75
 elif geology_type == "Calcaire (Dévonien)":
     rec_pf = 0.45
     rec_burden = 3.2
     rock_desc = "Roche compacte. Cassure franche."
     abrasivity = "Faible"
+    density_val = 2.65
 else:
     rec_pf = 0.50
     rec_burden = 3.0
     rock_desc = "Terrain variable."
     abrasivity = "Moyenne"
+    density_val = 2.6
 
 st.sidebar.info(f"ℹ️ **Info Roche:** {rock_desc}")
 
 st.sidebar.header("1. Objectifs de Production")
 target_tons = st.sidebar.number_input("Tonnage Cible (Tonnes)", min_value=1000, value=20000, step=500)
-rock_density = st.sidebar.number_input("Densité (t/m3)", value=2.7, step=0.1)
+rock_density = st.sidebar.number_input("Densité (t/m3)", value=density_val, step=0.01)
 
 st.sidebar.header("2. Géométrie de Foration")
 st.sidebar.markdown(f"*Recommandé pour {geology_type} : {rec_burden}m x {rec_burden*1.2:.1f}m*")
@@ -117,11 +121,11 @@ sand_quality_score = "Bonne"
 clay_risk = "Faible"
 if "Pélitique" in geology_type or "Mixte" in geology_type:
     if pf_target < 0.50:
-        sand_quality_score = "MÉDIOCRE (Sale)"
-        clay_risk = "ÉLEVÉ (Boue)"
+        sand_quality_score = "SALE (Boueux)"
+        clay_risk = "ÉLEVÉ"
         quality_msg = "⚠️ **Risque Qualité :** Avec un PF faible (<0.50) dans les Pélites, l'argile ne sera pas pulvérisée. Le sable sera sale (ES < 60)."
     else:
-        sand_quality_score = "Acceptable (Si scalpage)"
+        sand_quality_score = "Acceptable (Scalpage Requis)"
         clay_risk = "Moyen (Poussière)"
         quality_msg = "✅ **Optimisation :** Le PF élevé (>0.50) va aider à séparer l'argile des grès."
 elif geology_type == "Psammites (Ordovicien)":
@@ -182,49 +186,92 @@ cols = int(np.ceil(num_holes / rows)) + 1
 fig_pattern = create_pattern_plot(rows, cols, num_holes, burden, spacing)
 fig_profile = create_hole_profile(hole_depth, sub_drill, stemming_m, hole_depth - stemming_m - sub_drill - 0.5)
 
-# --- GÉNÉRATION PDF ---
+# --- GÉNÉRATION PDF (SINGLE PAGE FIX) ---
 def generate_pdf(t_tons, geology, pf, burden, spacing, num_holes, hole_depth, drill_m, total_ht, total_ttc, sand_quality, clay_risk):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=18)
     elements = []
     styles = getSampleStyleSheet()
     
-    # Titre
-    title_style = ParagraphStyle('TitleCustom', parent=styles['Title'], fontSize=16, spaceAfter=10, textColor=colors.darkblue)
+    # 1. EN-TÊTE COMPACT
+    title_style = ParagraphStyle('TitleCustom', parent=styles['Title'], fontSize=14, spaceAfter=5, textColor=colors.darkblue)
     elements.append(Paragraph("ORDRE DE TIR & ANALYSE GÉOLOGIQUE", title_style))
-    elements.append(Paragraph(f"<b>Site :</b> Benslimane | <b>Formation :</b> {geology}", styles['Normal']))
-    elements.append(Paragraph(f"<b>Date :</b> {pd.Timestamp.now().strftime('%d/%m/%Y')} | <b>Cible :</b> {t_tons:,.0f} Tonnes", styles['Normal']))
-    elements.append(Spacer(1, 15))
+    elements.append(Paragraph(f"<b>Site :</b> Benslimane | <b>Formation :</b> {geology} | <b>Date :</b> {pd.Timestamp.now().strftime('%d/%m/%Y')}", styles['Normal']))
+    elements.append(Spacer(1, 10))
     
-    # Tableau Technique
-    data = [
-        ["PARAMÈTRE", "VALEUR", "ANALYSE QUALITÉ SABLE"],
-        ["Maille (B x S)", f"{burden}m x {spacing}m", f"Qualité : {sand_quality}"],
-        ["Charge Spécifique", f"{pf} kg/m³", f"Risque Argile : {clay_risk}"],
-        ["Total Trous", f"{num_holes}", "Recommandation : Scalpage nécessaire" if "Pélitique" in geology else "Standard"],
+    # 2. GRILLE DE SYNTHÈSE (GEOLOGIE INCLUSE)
+    summary_data = [
+        ["PARAMÈTRE", "VALEUR", "PARAMÈTRE", "VALEUR"],
+        ["Production Cible", f"{t_tons:,.0f} T", "Qualité Sable", sand_quality],
+        ["Maille (B x S)", f"{burden}m x {spacing}m", "Risque Argile", clay_risk],
+        ["Charge Spécifique", f"{pf} kg/m³", "Total Trous", f"{num_holes}"],
+        ["Profondeur", f"{hole_depth} m", "Densité Roche", f"{rock_density} t/m³"]
     ]
-    t = Table(data, colWidths=[120, 150, 200])
-    t.setStyle(TableStyle([
+    t_summary = Table(summary_data, colWidths=[110, 110, 110, 150])
+    t_summary.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
         ('GRID', (0,0), (-1,-1), 1, colors.black),
         ('FONTNAME', (0,0), (-1,-1), 'Helvetica-Bold'),
         ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('SIZE', (0,0), (-1,-1), 8), # Police plus petite pour tout faire tenir
+        ('PADDING', (0,0), (-1,-1), 6),
+    ]))
+    elements.append(t_summary)
+    elements.append(Spacer(1, 10))
+
+    # 3. IMAGES CÔTE À CÔTE
+    img_buf1 = BytesIO()
+    fig_pattern.savefig(img_buf1, format='png', dpi=90, bbox_inches='tight') # DPI réduit pour la taille
+    img_buf1.seek(0)
+    
+    img_buf2 = BytesIO()
+    fig_profile.savefig(img_buf2, format='png', dpi=90, bbox_inches='tight')
+    img_buf2.seek(0)
+    
+    img1 = Image(img_buf1, width=300, height=200)
+    img2 = Image(img_buf2, width=80, height=200)
+    
+    img_data = [[img1, img2]]
+    t_images = Table(img_data, colWidths=[350, 100])
+    t_images.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
         ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
     ]))
-    elements.append(t)
-    elements.append(Spacer(1, 15))
+    elements.append(t_images)
     
-    # Coûts
-    elements.append(Paragraph("<b>ESTIMATION FINANCIÈRE</b>", styles['Heading4']))
+    # 4. INSTRUCTIONS CONCISES
+    instr_text = f"""
+    <font size=10><b>INSTRUCTIONS :</b></font><br/>
+    • <b>Surforation :</b> {sub_drill} m (Critique Pieds)<br/>
+    • <b>Charge :</b> {hole_depth - stemming_m - sub_drill - 0.5:.1f} m Ammonix + 1 Cartouche Emulsion<br/>
+    • <b>Bourrage :</b> {stemming_m} m (Gravette Propre). <b>SCALPAGE REQUIS AVANT CONCASSAGE.</b>
+    """
+    elements.append(Paragraph(instr_text, styles['Normal']))
+    elements.append(Spacer(1, 10))
+
+    # 5. TABLEAU DES COÛTS (COMPACT)
+    elements.append(Paragraph("<b>ESTIMATION FINANCIÈRE (DEVIS)</b>", styles['Heading4']))
     cost_data = [
-        ["Total Foration", f"{drill_m:,.0f} m"],
-        ["Coût Total (HT)", f"{total_ht:,.0f} DH"],
-        ["Coût Total (TTC)", f"{total_ttc:,.0f} DH"]
+        ["POSTE", "UNITÉ", "PRIX U.", "TOTAL (HT)"],
+        ["Foration", f"{drill_m:,.0f} m", f"{cost_drill_m}", f"{c_drill:,.0f}"],
+        ["Explosifs", f"{total_ammonix+total_emulsion:,.0f} kg", "Mix", f"{c_ammo+c_emul:,.0f}"],
+        ["Accessoires", f"{num_holes} u", "Var", f"{c_acc:,.0f}"],
+        ["Frais Fixes", "1", f"{fixed_fees}", f"{fixed_fees:,.0f}"],
+        ["<b>TOTAL HT</b>", "", "", f"<b>{total_ht:,.0f} DH</b>"],
+        ["<b>TOTAL TTC</b>", "", "", f"<b>{total_ttc:,.0f} DH</b>"]
     ]
-    t_cost = Table(cost_data, colWidths=[200, 150])
-    t_cost.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, colors.black)]))
+    t_cost = Table(cost_data, colWidths=[120, 80, 80, 120])
+    t_cost.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.grey),
+        ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
+        ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.black),
+        ('BACKGROUND', (0,5), (-1,6), colors.lightblue),
+        ('FONTNAME', (0,5), (-1,6), 'Helvetica-Bold'),
+        ('SIZE', (0,0), (-1,-1), 9),
+    ]))
     elements.append(t_cost)
-    
+
     doc.build(elements)
     buffer.seek(0)
     return buffer
@@ -265,6 +312,7 @@ with tab2:
     st.success(f"**Coût de Revient : {cost_per_ton:.2f} DH/tonne**")
 
 with tab3:
-    if st.button("📄 Générer Rapport Géologique"):
+    st.write("### 📄 Rapport Officiel (Une Page)")
+    if st.button("Générer le PDF"):
         pdf = generate_pdf(target_tons, geology_type, pf_target, burden, spacing, num_holes, hole_depth, total_drill_meters, total_ht, total_ttc, sand_quality_score, clay_risk)
-        st.download_button("⬇️ Télécharger", pdf, "Rapport_Geologie.pdf", "application/pdf")
+        st.download_button("⬇️ Télécharger l'Ordre de Tir", pdf, "Ordre_Geologie_Benslimane.pdf", "application/pdf")

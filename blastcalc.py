@@ -8,6 +8,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 # --- CONFIGURATION INITIALE ---
 st.set_page_config(
@@ -222,6 +223,9 @@ def generate_technical_report():
     elements = []
     styles = getSampleStyleSheet()
     
+    # Custom Table Styles to Fix Text Overlap
+    style_table_text = ParagraphStyle('TableText', parent=styles['Normal'], fontSize=9, leading=11, wordWrap='CJK')
+    
     # Header
     elements.append(Paragraph("RAPPORT TECHNIQUE DE TIR", styles['Title']))
     elements.append(Paragraph(f"<b>Site :</b> Carrière Benslimane &nbsp;&nbsp;|&nbsp;&nbsp; <b>Date :</b> {pd.Timestamp.now().strftime('%d/%m/%Y')}", styles['Normal']))
@@ -229,22 +233,37 @@ def generate_technical_report():
     elements.append(Spacer(1, 1*cm))
     
     # Section 1: Synthèse
+    # We use Paragraph objects inside the table to allow text wrapping!
+    p_tonnage = Paragraph(f"{target_tons:,.0f} T", style_table_text)
+    p_density = Paragraph(f"Densité retenue : {density_val}", style_table_text)
+    p_geo = Paragraph(f"{burden}m x {spacing}m", style_table_text)
+    p_maille = Paragraph(f"Maille : {burden*spacing:.1f} m²", style_table_text)
+    p_pf = Paragraph(f"{pf_target:.2f} kg/m³", style_table_text)
+    p_hard = Paragraph(f"Dureté : {rock_hardness}", style_table_text)
+    p_drill = Paragraph(f"{total_drill_meters:,.0f} m", style_table_text)
+    p_holes = Paragraph(f"{num_holes} Trous ({hole_diameter}mm)", style_table_text)
+    p_quality = Paragraph(quality_note, style_table_text)
+    p_risk = Paragraph(f"Risque Argile : {clay_risk}", style_table_text)
+
     data_synth = [
         ["PARAMÈTRE", "VALEUR", "NOTES TECHNIQUE"],
-        ["Objectif Tonnage", f"{target_tons:,.0f} T", f"Densité retenue : {density_val}"],
-        ["Géométrie (B x S)", f"{burden}m x {spacing}m", f"Maille : {burden*spacing:.1f} m²"],
-        ["Charge Spécifique", f"{pf_target:.2f} kg/m³", f"Dureté : {rock_hardness}"],
-        ["Foration Totale", f"{total_drill_meters:,.0f} m", f"{num_holes} Trous ({hole_diameter}mm)"],
-        ["Qualité Attendue", quality_note, f"Risque Argile : {clay_risk}"]
+        ["Objectif Tonnage", p_tonnage, p_density],
+        ["Géométrie (B x S)", p_geo, p_maille],
+        ["Charge Spécifique", p_pf, p_hard],
+        ["Foration Totale", p_drill, p_holes],
+        ["Qualité Attendue", p_quality, p_risk]
     ]
-    t_synth = Table(data_synth, colWidths=[4*cm, 4*cm, 8*cm])
+    
+    # Adjusted Column Widths to give more space for text
+    t_synth = Table(data_synth, colWidths=[4*cm, 7*cm, 6*cm])
     t_synth.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), '#004085'),
         ('TEXTCOLOR', (0,0), (-1,0), colors.white),
         ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), # Vertically center
         ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.grey),
-        ('PADDING', (0,0), (-1,-1), 6),
+        ('PADDING', (0,0), (-1,-1), 8), # More padding to avoid smashed look
     ]))
     elements.append(t_synth)
     elements.append(Spacer(1, 1*cm))
@@ -258,19 +277,27 @@ def generate_technical_report():
     
     # Section 3: Économie
     elements.append(Paragraph("<b>ESTIMATION BUDGÉTAIRE PRÉVISIONNELLE</b>", styles['Heading3']))
+    
+    p_drill_cost = Paragraph(f"{c_drill:,.0f} DH", style_table_text)
+    p_expl_cost = Paragraph(f"{c_ammo+c_emul:,.0f} DH", style_table_text)
+    p_acc_cost = Paragraph(f"{c_acc+fixed_fees:,.0f} DH", style_table_text)
+    p_total_cost = Paragraph(f"<b>{total_ht:,.0f} DH</b>", style_table_text)
+    
     data_cost = [
         ["POSTE DE DÉPENSE", "MONTANT (HT)", "% DU TOTAL"],
-        ["Foration", f"{c_drill:,.0f} DH", f"{c_drill/total_ht*100:.1f}%"],
-        ["Explosifs (Ammonix + Emulsion)", f"{c_ammo+c_emul:,.0f} DH", f"{(c_ammo+c_emul)/total_ht*100:.1f}%"],
-        ["Accessoires & Fixes", f"{c_acc+fixed_fees:,.0f} DH", f"{(c_acc+fixed_fees)/total_ht*100:.1f}%"],
-        ["TOTAL HT", f"{total_ht:,.0f} DH", "100%"],
+        ["Foration", p_drill_cost, f"{c_drill/total_ht*100:.1f}%"],
+        ["Explosifs (Ammonix + Emulsion)", p_expl_cost, f"{(c_ammo+c_emul)/total_ht*100:.1f}%"],
+        ["Accessoires & Fixes", p_acc_cost, f"{(c_acc+fixed_fees)/total_ht*100:.1f}%"],
+        ["TOTAL HT", p_total_cost, "100%"],
         ["COÛT UNITAIRE", f"{cost_per_ton:.2f} DH/T", "-"],
     ]
     t_cost = Table(data_cost, colWidths=[8*cm, 4*cm, 4*cm])
     t_cost.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), '#e9ecef'),
         ('GRID', (0,0), (-1,-1), 0.5, colors.black),
-        ('FONTNAME', (0,4), (-1,5), 'Helvetica-Bold'), # Bold totals
+        ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('PADDING', (0,0), (-1,-1), 6),
         ('BACKGROUND', (0,4), (-1,5), '#d4edda'), # Green tint for totals
     ]))
     elements.append(t_cost)

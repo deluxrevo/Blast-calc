@@ -272,7 +272,7 @@ def generate_technical_report():
     img_buf = BytesIO()
     fig_plan.savefig(img_buf, format='png', dpi=100, bbox_inches='tight')
     img_buf.seek(0)
-    elements.append(Image(img_buf, width=14*cm, height=11*cm))
+    elements.append(Image(img_buf, width=14*cm, height=10*cm))
     elements.append(Spacer(1, 1*cm))
     
     # Section 3: Économie

@@ -24,7 +24,7 @@ if 'authenticated' not in st.session_state:
 
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "2024":  # <--- CHANGEZ LE MOT DE PASSE ICI
+        if st.session_state["password"] == "1999":  
             st.session_state.authenticated = True
             del st.session_state["password"]
         else:

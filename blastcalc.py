@@ -280,6 +280,165 @@ def plot_blast_pattern(num_holes: int, burden: float, spacing: float) -> plt.Fig
 fig_plan = plot_blast_pattern(num_holes, burden, spacing)
 
 # ---------------------------------------------------------------------------
+# HOLE CROSS-SECTION DIAGRAM
+# ---------------------------------------------------------------------------
+
+SAFETY_GAP_HEIGHT: float = 0.5  # safety clearance between stemming and main charge
+
+
+def plot_hole_cross_section(
+    hole_depth: float,
+    bench_height: float,
+    sub_drill: float,
+    stemming_m: float,
+    gap_height: float,
+    emulsion_per_hole: float,
+    ammonix_per_hole: float,
+    hole_diameter: int,
+) -> plt.Figure:
+    """
+    Draw a vertical cross-section of a single blast hole showing all loading zones.
+    Zone heights are drawn proportionally to the available charge column so the
+    diagram always fits the hole regardless of charge density.
+    Y-axis: 0 = ground surface, negative values = depth.
+    """
+    # ── Compute visual zone heights ──────────────────────────────────────────
+    charge_col_height = max(0.01, hole_depth - stemming_m - gap_height)
+    total_charge_kg = (emulsion_per_hole + ammonix_per_hole) or 1.0
+    emulsion_height = charge_col_height * (emulsion_per_hole / total_charge_kg)
+    ammonix_height = charge_col_height * (ammonix_per_hole / total_charge_kg)
+
+    # ── Zone boundary depths (negative = downward) ──────────────────────────
+    y_surface = 0.0
+    y_stemming_bot = -stemming_m
+    y_gap_bot = y_stemming_bot - gap_height
+    y_ammonix_bot = y_gap_bot - ammonix_height
+    y_emulsion_bot = y_ammonix_bot - emulsion_height
+    y_bench_floor = -bench_height
+    y_hole_bot = -hole_depth
+
+    half_w = 0.35  # half-width of the drawn column (visual units)
+    ann_x = half_w + 0.15  # x-position for right-side annotations
+
+    fig, ax = plt.subplots(figsize=(4, 9))
+    fig.patch.set_facecolor("#f8f9fa")
+    ax.set_facecolor("#f8f9fa")
+
+    # Helper: draw a filled rectangle zone
+    def draw_zone(y_top: float, y_bot: float, color: str, hatch: str = "") -> None:
+        height = abs(y_bot - y_top)
+        ax.add_patch(plt.Rectangle(
+            (-half_w, y_bot), 2 * half_w, height,
+            facecolor=color, edgecolor="#333333", linewidth=0.8, hatch=hatch, zorder=2,
+        ))
+
+    # ── Draw hole outline (thin grey column all the way down) ────────────────
+    draw_zone(y_surface, y_hole_bot, color="#d0d0d0")
+
+    # ── Zone 1: Stemming / Bourrage ──────────────────────────────────────────
+    draw_zone(y_surface, y_stemming_bot, color="#b5651d", hatch="//")
+
+    # ── Zone 2: Safety clearance gap ────────────────────────────────────────
+    draw_zone(y_stemming_bot, y_gap_bot, color="#e0e0e0", hatch="..")
+
+    # ── Zone 3: Ammonix (ANFO) ───────────────────────────────────────────────
+    draw_zone(y_gap_bot, y_ammonix_bot, color="#f0a500", hatch="")
+
+    # ── Zone 4: Emulsion Booster ─────────────────────────────────────────────
+    draw_zone(y_ammonix_bot, y_emulsion_bot, color="#e63946", hatch="")
+
+    # ── Zone 5: Sub-drill (surforation below bench floor) ────────────────────
+    if sub_drill > 0:
+        draw_zone(y_bench_floor, y_hole_bot, color="#607d8b", hatch="xx")
+
+    # ── Reference lines ──────────────────────────────────────────────────────
+    ax.axhline(y=0, color="#2c3e50", linewidth=2.5, zorder=4)
+    ax.text(ann_x + 0.15, 0.15, "Surface", fontsize=8, color="#2c3e50",
+            fontweight="bold", va="bottom")
+
+    ax.axhline(y=y_bench_floor, color="#1a6b3c", linewidth=2, linestyle="--", zorder=4)
+    ax.text(ann_x + 0.15, y_bench_floor + 0.15,
+            f"Fond gradin\n({bench_height:.1f} m)",
+            fontsize=7.5, color="#1a6b3c", fontweight="bold", va="bottom")
+
+    # ── Dimension arrows & annotations (left side) ───────────────────────────
+    def arrow_annot(y1: float, y2: float, label: str, x_pos: float = -half_w - 0.55) -> None:
+        if abs(y2 - y1) < 0.05:
+            return
+        mid = (y1 + y2) / 2
+        ax.annotate(
+            "", xy=(x_pos, y2), xytext=(x_pos, y1),
+            arrowprops=dict(arrowstyle="<->", color="#555555", lw=1.2),
+        )
+        ax.text(x_pos - 0.05, mid, label, fontsize=7.5, ha="right", va="center",
+                color="#333333", linespacing=1.4)
+
+    arrow_annot(y_surface, y_stemming_bot,
+                f"Bourrage\n{stemming_m:.1f} m")
+    arrow_annot(y_gap_bot, y_ammonix_bot,
+                f"Ammonix\n{ammonix_per_hole:.1f} kg")
+    arrow_annot(y_ammonix_bot, y_emulsion_bot,
+                f"Émulsion\n{emulsion_per_hole:.1f} kg")
+    if sub_drill > 0:
+        arrow_annot(y_bench_floor, y_hole_bot,
+                    f"Surforation\n{sub_drill:.1f} m")
+
+    # Total depth annotation (right side)
+    ax.annotate(
+        "", xy=(ann_x + 0.55, y_hole_bot), xytext=(ann_x + 0.55, y_surface),
+        arrowprops=dict(arrowstyle="<->", color="#004085", lw=1.5),
+    )
+    ax.text(ann_x + 0.65, -hole_depth / 2,
+            f"Prof. totale\n{hole_depth:.1f} m",
+            fontsize=8, ha="left", va="center", color="#004085",
+            fontweight="bold", linespacing=1.4)
+
+    # ── Legend labels inside zones ────────────────────────────────────────────
+    zone_labels: list[tuple[float, float, str, str]] = [
+        (y_surface, y_stemming_bot, "BOURRAGE", "#ffffff"),
+        (y_gap_bot, y_ammonix_bot, "AMMONIX\n(ANFO)", "#333333"),
+        (y_ammonix_bot, y_emulsion_bot, "ÉMULSION\n(Booster)", "#ffffff"),
+    ]
+    if sub_drill > 0:
+        zone_labels.append((y_bench_floor, y_hole_bot, "SURFORATION", "#ffffff"))
+
+    for y_top, y_bot, label, tcolor in zone_labels:
+        if abs(y_bot - y_top) >= 0.3:
+            ax.text(0, (y_top + y_bot) / 2, label, fontsize=7.5, ha="center", va="center",
+                    color=tcolor, fontweight="bold", linespacing=1.3, zorder=5)
+
+    # ── Axis formatting ───────────────────────────────────────────────────────
+    ax.set_xlim(-1.4, 1.8)
+    ax.set_ylim(y_hole_bot - 0.5, 1.0)
+    ax.set_yticks(np.arange(0, int(y_hole_bot) - 1, -1))
+    ax.yaxis.set_tick_params(labelsize=7)
+    ax.set_xticks([])
+    ax.set_ylabel("Profondeur (m)", fontsize=8)
+    ax.set_title(
+        f"Coupe Transversale du Trou (Ø {hole_diameter} mm)\n"
+        f"Charge totale : {ammonix_per_hole + emulsion_per_hole:.1f} kg/trou",
+        fontsize=9, pad=8, fontweight="bold",
+    )
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+
+    fig.tight_layout()
+    return fig
+
+
+fig_hole = plot_hole_cross_section(
+    hole_depth=hole_depth,
+    bench_height=bench_height,
+    sub_drill=sub_drill,
+    stemming_m=stemming_m,
+    gap_height=SAFETY_GAP_HEIGHT,
+    emulsion_per_hole=emulsion_per_hole,
+    ammonix_per_hole=ammonix_per_hole,
+    hole_diameter=hole_diameter,
+)
+
+# ---------------------------------------------------------------------------
 # PDF REPORT GENERATION
 # ---------------------------------------------------------------------------
 
@@ -390,7 +549,15 @@ def generate_technical_report() -> BytesIO:
     elements.append(Image(img_buf, width=14 * cm, height=10 * cm))
     elements.append(Spacer(1, 1 * cm))
 
-    # ── Section 4: Budget Estimate ───────────────────────────────────────────
+    # ── Section 4: Hole Cross-Section ────────────────────────────────────────
+    elements.append(Paragraph("<b>COUPE TRANSVERSALE DU TROU DE TIR</b>", styles["Heading3"]))
+    hole_img_buf = BytesIO()
+    fig_hole.savefig(hole_img_buf, format="png", dpi=120, bbox_inches="tight")
+    hole_img_buf.seek(0)
+    elements.append(Image(hole_img_buf, width=8 * cm, height=16 * cm))
+    elements.append(Spacer(1, 1 * cm))
+
+    # ── Section 5: Budget Estimate ───────────────────────────────────────────
     elements.append(Paragraph("<b>ESTIMATION BUDGÉTAIRE PRÉVISIONNELLE</b>", styles["Heading3"]))
     data_cost = [
         ["POSTE DE DÉPENSE", "DÉTAIL QUANTITÉ", "MONTANT (HT)", "% DU TOTAL"],
@@ -484,6 +651,13 @@ with tab1:
         st.info(f"**Analyse Qualité ({geology_type}):**\n{quality_note}")
 
     with col_data:
+        st.subheader("Coupe du Trou de Tir")
+        st.pyplot(fig_hole)
+
+    st.markdown("---")
+    col_expl, col_cost = st.columns(2)
+
+    with col_expl:
         # Explosive quantities summary
         st.subheader("Quantités d'Explosifs")
         df_explosives = pd.DataFrame({
@@ -501,8 +675,7 @@ with tab1:
             hide_index=True,
         )
 
-        st.markdown("---")
-
+    with col_cost:
         # Full cost breakdown
         st.subheader("Détail des Coûts")
         df_costs = pd.DataFrame({

@@ -388,6 +388,8 @@ def plot_hole_cross_section(
 
     left_arrow_annot(y_surface, y_stemming_bot,
                      "Bourrage", f"{stemming_m:.1f} m")
+    left_arrow_annot(y_stemming_bot, y_gap_bot,
+                     "Sécurité", f"{gap_height:.1f} m")
     left_arrow_annot(y_gap_bot, y_ammonix_bot,
                      "Ammonix", f"{ammonix_per_hole:.1f} kg")
 
@@ -412,9 +414,10 @@ def plot_hole_cross_section(
         f"Émulsion\n{emulsion_per_hole:.1f} kg",
     )
     if sub_drill > 0:
+        sub_drill_kg = (sub_drill / charge_col_height) * total_charge_kg
         right_leader_annot(
             (y_bench_floor + y_hole_bot) / 2,
-            f"Surforation\n{sub_drill:.1f} m",
+            f"Surforation\n{sub_drill:.1f} m\n{sub_drill_kg:.1f} kg",
         )
 
     # ── Total depth arrow (far right) ────────────────────────────────────────
@@ -431,8 +434,6 @@ def plot_hole_cross_section(
         (y_gap_bot, y_ammonix_bot, "AMMONIX\n(ANFO)", "#333333"),
         (y_ammonix_bot, y_emulsion_bot, "ÉMULSION\n(Booster)", "#ffffff"),
     ]
-    if sub_drill > 0:
-        in_col_zones.append((y_bench_floor, y_hole_bot, "SURFORATION", "#ffffff"))
 
     for y_top, y_bot, label, tcolor in in_col_zones:
         if abs(y_bot - y_top) >= MIN_LABEL_HEIGHT:

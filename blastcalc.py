@@ -298,10 +298,18 @@ def plot_hole_cross_section(
 ) -> plt.Figure:
     """
     Draw a vertical cross-section of a single blast hole showing all loading zones.
+
     Zone heights are drawn proportionally to the available charge column so the
     diagram always fits the hole regardless of charge density.
-    Y-axis: 0 = ground surface, negative values = depth.
+
+    Annotation strategy (no overlaps):
+    - LEFT side (double-arrow brackets): Bourrage, Ammonix  — large zones
+    - RIGHT side (horizontal leader lines): Émulsion, Surforation — small zones
+    - Inside-column text only when zone visual height >= MIN_LABEL_HEIGHT
+    - "Prof. totale" arrow placed far right, clear of all labels
     """
+    MIN_LABEL_HEIGHT = 1.0  # minimum zone height (m) to show an in-column label
+
     # ── Compute visual zone heights ──────────────────────────────────────────
     charge_col_height = max(0.01, hole_depth - stemming_m - gap_height)
     total_charge_kg = (emulsion_per_hole + ammonix_per_hole) or 1.0
@@ -317,107 +325,132 @@ def plot_hole_cross_section(
     y_bench_floor = -bench_height
     y_hole_bot = -hole_depth
 
-    half_w = 0.35  # half-width of the drawn column (visual units)
-    ann_x = half_w + 0.15  # x-position for right-side annotations
+    half_w = 0.40           # half-width of the drawn column (visual units)
+    col_right = half_w      # right edge of column
+    col_left = -half_w      # left edge of column
 
-    fig, ax = plt.subplots(figsize=(4, 9))
+    # Annotation x-positions
+    x_left_arrow = col_left - 0.55   # x of the vertical double-arrow line (left)
+    x_left_text = x_left_arrow - 0.12  # text right-aligned to this x
+    x_right_leader = col_right + 0.15  # start of right horizontal leader line
+    x_right_text = col_right + 0.65   # start of right text
+    x_depth_arrow = col_right + 1.45  # far-right total-depth arrow
+
+    fig, ax = plt.subplots(figsize=(5.5, 11))
     fig.patch.set_facecolor("#f8f9fa")
     ax.set_facecolor("#f8f9fa")
 
-    # Helper: draw a filled rectangle zone
+    # ── Helper: draw a filled rectangle zone ────────────────────────────────
     def draw_zone(y_top: float, y_bot: float, color: str, hatch: str = "") -> None:
-        height = abs(y_bot - y_top)
         ax.add_patch(plt.Rectangle(
-            (-half_w, y_bot), 2 * half_w, height,
+            (col_left, y_bot), 2 * half_w, abs(y_bot - y_top),
             facecolor=color, edgecolor="#333333", linewidth=0.8, hatch=hatch, zorder=2,
         ))
 
-    # ── Draw hole outline (thin grey column all the way down) ────────────────
-    draw_zone(y_surface, y_hole_bot, color="#d0d0d0")
-
-    # ── Zone 1: Stemming / Bourrage ──────────────────────────────────────────
-    draw_zone(y_surface, y_stemming_bot, color="#b5651d", hatch="//")
-
-    # ── Zone 2: Safety clearance gap ────────────────────────────────────────
-    draw_zone(y_stemming_bot, y_gap_bot, color="#e0e0e0", hatch="..")
-
-    # ── Zone 3: Ammonix (ANFO) ───────────────────────────────────────────────
-    draw_zone(y_gap_bot, y_ammonix_bot, color="#f0a500", hatch="")
-
-    # ── Zone 4: Emulsion Booster ─────────────────────────────────────────────
-    draw_zone(y_ammonix_bot, y_emulsion_bot, color="#e63946", hatch="")
-
-    # ── Zone 5: Sub-drill (surforation below bench floor) ────────────────────
+    # ── Zones ────────────────────────────────────────────────────────────────
+    draw_zone(y_surface, y_hole_bot, color="#d0d0d0")                      # hole outline
+    draw_zone(y_surface, y_stemming_bot, color="#b5651d", hatch="//")      # Bourrage
+    draw_zone(y_stemming_bot, y_gap_bot, color="#e0e0e0", hatch="..")      # Gap
+    draw_zone(y_gap_bot, y_ammonix_bot, color="#f0a500")                   # Ammonix
+    draw_zone(y_ammonix_bot, y_emulsion_bot, color="#e63946")              # Emulsion
     if sub_drill > 0:
-        draw_zone(y_bench_floor, y_hole_bot, color="#607d8b", hatch="xx")
+        draw_zone(y_bench_floor, y_hole_bot, color="#607d8b", hatch="xx") # Sub-drill
 
     # ── Reference lines ──────────────────────────────────────────────────────
     ax.axhline(y=0, color="#2c3e50", linewidth=2.5, zorder=4)
-    ax.text(ann_x + 0.15, 0.15, "Surface", fontsize=8, color="#2c3e50",
-            fontweight="bold", va="bottom")
+    ax.text(x_right_leader, 0.25, "Surface", fontsize=9, color="#2c3e50",
+            fontweight="bold", va="bottom", ha="left")
 
     ax.axhline(y=y_bench_floor, color="#1a6b3c", linewidth=2, linestyle="--", zorder=4)
-    ax.text(ann_x + 0.15, y_bench_floor + 0.15,
-            f"Fond gradin\n({bench_height:.1f} m)",
-            fontsize=7.5, color="#1a6b3c", fontweight="bold", va="bottom")
+    ax.text(x_right_leader, y_bench_floor - 0.25,
+            f"Fond gradin  ({bench_height:.1f} m)",
+            fontsize=8.5, color="#1a6b3c", fontweight="bold", va="top", ha="left")
 
-    # ── Dimension arrows & annotations (left side) ───────────────────────────
-    def arrow_annot(y1: float, y2: float, label: str, x_pos: float = -half_w - 0.55) -> None:
-        if abs(y2 - y1) < 0.05:
+    # ── LEFT double-arrow annotations (large zones) ──────────────────────────
+    def left_arrow_annot(y_top: float, y_bot: float, line1: str, line2: str) -> None:
+        """Vertical double-arrow + label on the left side of the column."""
+        if abs(y_bot - y_top) < 0.05:
             return
-        mid = (y1 + y2) / 2
+        mid = (y_top + y_bot) / 2
+        # Tick marks at zone boundaries
+        ax.plot([x_left_arrow - 0.06, x_left_arrow + 0.06], [y_top, y_top],
+                color="#555555", lw=1.0, zorder=5)
+        ax.plot([x_left_arrow - 0.06, x_left_arrow + 0.06], [y_bot, y_bot],
+                color="#555555", lw=1.0, zorder=5)
+        ax.annotate("", xy=(x_left_arrow, y_bot), xytext=(x_left_arrow, y_top),
+                    arrowprops=dict(arrowstyle="<->", color="#555555", lw=1.2))
+        ax.text(x_left_text, mid,
+                f"{line1}\n{line2}",
+                fontsize=8, ha="right", va="center", color="#333333",
+                linespacing=1.5,
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="#f8f9fa",
+                          edgecolor="none", alpha=0.85))
+
+    left_arrow_annot(y_surface, y_stemming_bot,
+                     "Bourrage", f"{stemming_m:.1f} m")
+    left_arrow_annot(y_gap_bot, y_ammonix_bot,
+                     "Ammonix", f"{ammonix_per_hole:.1f} kg")
+
+    # ── RIGHT horizontal leader annotations (small / bottom zones) ───────────
+    def right_leader_annot(y_zone_mid: float, label: str, dy_offset: float = 0.0) -> None:
+        """Short horizontal leader line from the column right edge to a text label."""
+        y = y_zone_mid + dy_offset
         ax.annotate(
-            "", xy=(x_pos, y2), xytext=(x_pos, y1),
-            arrowprops=dict(arrowstyle="<->", color="#555555", lw=1.2),
+            label,
+            xy=(col_right, y_zone_mid),
+            xytext=(x_right_text, y),
+            fontsize=8, ha="left", va="center", color="#333333",
+            linespacing=1.45,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="#f8f9fa",
+                      edgecolor="#aaaaaa", linewidth=0.6),
+            arrowprops=dict(arrowstyle="-", color="#888888", lw=1.0,
+                            connectionstyle="arc3,rad=0.0"),
         )
-        ax.text(x_pos - 0.05, mid, label, fontsize=7.5, ha="right", va="center",
-                color="#333333", linespacing=1.4)
 
-    arrow_annot(y_surface, y_stemming_bot,
-                f"Bourrage\n{stemming_m:.1f} m")
-    arrow_annot(y_gap_bot, y_ammonix_bot,
-                f"Ammonix\n{ammonix_per_hole:.1f} kg")
-    arrow_annot(y_ammonix_bot, y_emulsion_bot,
-                f"Émulsion\n{emulsion_per_hole:.1f} kg")
-    if sub_drill > 0:
-        arrow_annot(y_bench_floor, y_hole_bot,
-                    f"Surforation\n{sub_drill:.1f} m")
-
-    # Total depth annotation (right side)
-    ax.annotate(
-        "", xy=(ann_x + 0.55, y_hole_bot), xytext=(ann_x + 0.55, y_surface),
-        arrowprops=dict(arrowstyle="<->", color="#004085", lw=1.5),
+    right_leader_annot(
+        (y_ammonix_bot + y_emulsion_bot) / 2,
+        f"Émulsion\n{emulsion_per_hole:.1f} kg",
     )
-    ax.text(ann_x + 0.65, -hole_depth / 2,
-            f"Prof. totale\n{hole_depth:.1f} m",
-            fontsize=8, ha="left", va="center", color="#004085",
-            fontweight="bold", linespacing=1.4)
+    if sub_drill > 0:
+        right_leader_annot(
+            (y_bench_floor + y_hole_bot) / 2,
+            f"Surforation\n{sub_drill:.1f} m",
+        )
 
-    # ── Legend labels inside zones ────────────────────────────────────────────
-    zone_labels: list[tuple[float, float, str, str]] = [
+    # ── Total depth arrow (far right) ────────────────────────────────────────
+    ax.annotate("", xy=(x_depth_arrow, y_hole_bot), xytext=(x_depth_arrow, y_surface),
+                arrowprops=dict(arrowstyle="<->", color="#004085", lw=1.8))
+    ax.text(x_depth_arrow + 0.12, -hole_depth / 2,
+            f"Prof. totale\n{hole_depth:.1f} m",
+            fontsize=9, ha="left", va="center", color="#004085",
+            fontweight="bold", linespacing=1.5)
+
+    # ── In-column zone labels (only for zones tall enough) ───────────────────
+    in_col_zones: list[tuple[float, float, str, str]] = [
         (y_surface, y_stemming_bot, "BOURRAGE", "#ffffff"),
         (y_gap_bot, y_ammonix_bot, "AMMONIX\n(ANFO)", "#333333"),
         (y_ammonix_bot, y_emulsion_bot, "ÉMULSION\n(Booster)", "#ffffff"),
     ]
     if sub_drill > 0:
-        zone_labels.append((y_bench_floor, y_hole_bot, "SURFORATION", "#ffffff"))
+        in_col_zones.append((y_bench_floor, y_hole_bot, "SURFORATION", "#ffffff"))
 
-    for y_top, y_bot, label, tcolor in zone_labels:
-        if abs(y_bot - y_top) >= 0.3:
-            ax.text(0, (y_top + y_bot) / 2, label, fontsize=7.5, ha="center", va="center",
+    for y_top, y_bot, label, tcolor in in_col_zones:
+        if abs(y_bot - y_top) >= MIN_LABEL_HEIGHT:
+            ax.text(0, (y_top + y_bot) / 2, label,
+                    fontsize=8, ha="center", va="center",
                     color=tcolor, fontweight="bold", linespacing=1.3, zorder=5)
 
     # ── Axis formatting ───────────────────────────────────────────────────────
-    ax.set_xlim(-1.4, 1.8)
-    ax.set_ylim(y_hole_bot - 0.5, 1.0)
+    ax.set_xlim(-1.8, x_depth_arrow + 1.0)
+    ax.set_ylim(y_hole_bot - 0.6, 1.0)
     ax.set_yticks(np.arange(0, int(y_hole_bot) - 1, -1))
-    ax.yaxis.set_tick_params(labelsize=7)
+    ax.yaxis.set_tick_params(labelsize=8)
     ax.set_xticks([])
-    ax.set_ylabel("Profondeur (m)", fontsize=8)
+    ax.set_ylabel("Profondeur (m)", fontsize=9)
     ax.set_title(
-        f"Coupe Transversale du Trou (Ø {hole_diameter} mm)\n"
+        f"Coupe Transversale du Trou  (Ø {hole_diameter} mm)\n"
         f"Charge totale : {ammonix_per_hole + emulsion_per_hole:.1f} kg/trou",
-        fontsize=9, pad=8, fontweight="bold",
+        fontsize=10, pad=10, fontweight="bold",
     )
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)

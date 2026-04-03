@@ -202,7 +202,7 @@ emulsion_per_hole: float = 5.0                                 # kg — standard
 ammonix_per_hole: float = max(0.0, total_explosive_per_hole - emulsion_per_hole)
 
 # Physical capacity check
-charge_length_available: float = hole_depth - stemming_m - 0.0            # m
+charge_length_available: float = hole_depth - stemming_m - 0.5            # m
 linear_charge_density: float = (np.pi * ((hole_diameter / 1000) / 2) ** 2) * 850  # kg/m
 max_ammonix_capacity: float = charge_length_available * linear_charge_density       # kg
 

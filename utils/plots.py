@@ -194,7 +194,7 @@ def plot_hole_cross_section(
         (y_ammonix_bot + y_emulsion_bot) / 2,
         f"Émulsion\n{emulsion_per_hole:.1f} kg",
     )
-    if sub_drill > 0:
+    if sub_drill > 0 and charge_col_height > 0.05:
         sub_drill_kg = (sub_drill / charge_col_height) * total_charge_kg
         right_leader_annot(
             (y_bench_floor + y_hole_bot) / 2,

@@ -32,6 +32,10 @@ GEOLOGY_PROFILES: dict[str, dict[str, str | float]] = {
         "clay_risk": "FAIBLE",
     },
     "Calcaire Franc": {
+        # rec_pf reduced from 0.45 → 0.25 kg/m³ to reflect a realistic first-step
+        # target for the quarry based on field invoice analysis (Fév–Mars 2026).
+        # At 0.25 kg/m³ the stemming column is raised by ~2 m vs. current practice
+        # (~0.15 kg/m³), improving fragmentation without a large cost increase.
         "rec_pf": 0.25,
         "rec_burden": 3.5,
         "rec_spacing": 4.2,

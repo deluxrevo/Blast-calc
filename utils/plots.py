@@ -12,15 +12,40 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
-from utils.calculations import BlastGeometry, BlastCharges
+from utils.calculations import (
+    BlastGeometry,
+    BlastCharges,
+    PATTERN_RECTANGULAR,
+    PATTERN_CENTER_HOLE,
+    area_per_hole,
+)
 
 
 # ---------------------------------------------------------------------------
 # BLAST PATTERN (TOP VIEW)
 # ---------------------------------------------------------------------------
 
-def plot_blast_pattern(num_holes: int, burden: float, spacing: float) -> plt.Figure:
-    """Generate a top-view staggered blast pattern diagram."""
+_PATTERN_LABELS = {
+    "rectangular": "Grille rectangulaire",
+    "staggered": "Quinconce",
+    "center_hole": "Grille + trou central",
+}
+
+
+def plot_blast_pattern(
+    num_holes: int,
+    burden: float,
+    spacing: float,
+    pattern: str = "staggered",
+) -> plt.Figure:
+    """
+    Generate a top-view blast pattern diagram.
+
+    Rows are drawn every `burden` m (every burden/2 m for the centre-hole
+    pattern, whose offset rows are what the added centre holes form).
+    """
+    row_pitch = burden / 2 if pattern == PATTERN_CENTER_HOLE else burden
+    stagger = pattern != PATTERN_RECTANGULAR
     rows = int(np.ceil(np.sqrt(num_holes)))
     cols = int(np.ceil(num_holes / rows)) + 1
 
@@ -32,8 +57,8 @@ def plot_blast_pattern(num_holes: int, burden: float, spacing: float) -> plt.Fig
         for c in range(cols):
             if hole_count >= num_holes:
                 break
-            x = c * spacing + (spacing / 2 if r % 2 != 0 else 0)
-            y = r * burden * -1
+            x = c * spacing + (spacing / 2 if stagger and r % 2 != 0 else 0)
+            y = -r * row_pitch
             x_coords.append(x)
             y_coords.append(y)
             hole_count += 1
@@ -52,11 +77,12 @@ def plot_blast_pattern(num_holes: int, burden: float, spacing: float) -> plt.Fig
         label="Front Libre (Théorique)",
     )
     ax.set_title(
-        f"Plan de Tir — Maille {burden} m × {spacing} m (Quinconce)",
+        f"Plan de Tir — Maille {burden} m × {spacing} m ({_PATTERN_LABELS.get(pattern, pattern)})"
+        f" — {area_per_hole(burden, spacing, pattern):.2f} m²/trou",
         fontsize=10, pad=10, fontweight="bold",
     )
     ax.set_xlabel("Espacement (m)", fontsize=8)
-    ax.set_ylabel("Banquette (m)", fontsize=8)
+    ax.set_ylabel("Rangées (m)", fontsize=8)
     ax.grid(True, linestyle="--", alpha=0.5, color="grey")
     ax.legend(loc="upper right", fontsize=8)
     ax.set_aspect("equal")

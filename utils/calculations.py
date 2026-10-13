@@ -8,10 +8,178 @@ No Streamlit imports — keeps the calculation layer fully testable.
 from __future__ import annotations
 
 import math
-import numpy as np
 from dataclasses import dataclass
 
 from utils.config import AMMONIX_BULK_DENSITY
+
+# ---------------------------------------------------------------------------
+# UNIT MODEL
+# ---------------------------------------------------------------------------
+#   hole diameter ........ mm          area per hole ........ m²
+#   hole volume / metre .. m³/m        rock volume .......... m³
+#   explosive mass ....... kg          rock density ......... t/m³
+#   bulk density ......... kg/m³       PF ................... kg/t or kg/m³
+
+PATTERN_RECTANGULAR = "rectangular"
+PATTERN_STAGGERED = "staggered"
+PATTERN_CENTER_HOLE = "center_hole"
+
+PATTERN_FACTORS: dict[str, float] = {
+    # holes per B x S cell
+    PATTERN_RECTANGULAR: 1.0,
+    PATTERN_STAGGERED: 1.0,    # offset rows, same B x S area per hole
+    PATTERN_CENTER_HOLE: 2.0,  # extra hole in every B x S rectangle
+}
+
+PF_KG_PER_M3 = "kg/m³"
+PF_KG_PER_T = "kg/t"
+PF_UNITS = (PF_KG_PER_T, PF_KG_PER_M3)
+
+
+# ---------------------------------------------------------------------------
+# PURE FORMULA HELPERS
+# ---------------------------------------------------------------------------
+
+def area_per_hole(burden: float, spacing: float, pattern: str = PATTERN_RECTANGULAR) -> float:
+    """
+    Effective rock plan area drained by one hole (m²).
+
+    area = B x S / holes_per_cell, where holes_per_cell is 1 for a rectangular
+    or staggered (quinconce) grid and 2 when a centre hole is added in every
+    B x S rectangle (doubled density, halved area per hole).
+    """
+    if burden <= 0 or spacing <= 0:
+        raise ValueError("Burden and spacing must be strictly positive.")
+    try:
+        factor = PATTERN_FACTORS[pattern]
+    except KeyError:
+        raise ValueError(f"Unknown pattern '{pattern}'.") from None
+    return burden * spacing / factor
+
+
+def rock_volume_per_hole(area_m2: float, bench_height: float) -> float:
+    """Blasted rock volume per hole (m³) = area per hole (m²) x bench height (m)."""
+    return area_m2 * bench_height
+
+
+def hole_area_m2(diameter_mm: float) -> float:
+    """Cross-section area of a blast hole (m²) from its diameter in mm."""
+    radius_m = diameter_mm / 1000 / 2
+    return math.pi * radius_m ** 2
+
+
+def hole_volume_per_meter(diameter_mm: float) -> float:
+    """Volume of hole per metre drilled (m³/m); e.g. 89 mm -> 0.006221 m³/m."""
+    return hole_area_m2(diameter_mm)
+
+
+def total_hole_volume(diameter_mm: float, drilled_meters: float) -> float:
+    """Total drilled hole volume (m³) = m³/m x drilled metres."""
+    return hole_volume_per_meter(diameter_mm) * drilled_meters
+
+
+def explosive_capacity_kg(hole_volume_m3: float, bulk_density_kg_m3: float) -> float:
+    """Mass of explosive (kg) filling a hole volume at the given bulk density (kg/m³)."""
+    return hole_volume_m3 * bulk_density_kg_m3
+
+
+def rock_tonnage(volume_m3: float, density_t_m3: float) -> float:
+    """Rock mass (t) = volume (m³) x density (t/m³)."""
+    return volume_m3 * density_t_m3
+
+
+def pf_per_tonne(explosive_kg: float, tonnage_t: float) -> float:
+    """Powder factor in kg/t."""
+    if tonnage_t <= 0:
+        raise ValueError("Tonnage must be strictly positive.")
+    return explosive_kg / tonnage_t
+
+
+def pf_per_m3(explosive_kg: float, volume_m3: float) -> float:
+    """Powder factor in kg/m³."""
+    if volume_m3 <= 0:
+        raise ValueError("Volume must be strictly positive.")
+    return explosive_kg / volume_m3
+
+
+def pf_kg_t_to_kg_m3(pf_kg_t: float, density_t_m3: float) -> float:
+    """Convert PF from kg/t to kg/m³ (kg/m³ = kg/t x t/m³)."""
+    return pf_kg_t * density_t_m3
+
+
+def pf_kg_m3_to_kg_t(pf_kg_m3: float, density_t_m3: float) -> float:
+    """Convert PF from kg/m³ to kg/t (kg/t = kg/m³ / t/m³)."""
+    if density_t_m3 <= 0:
+        raise ValueError("Density must be strictly positive.")
+    return pf_kg_m3 / density_t_m3
+
+
+def pf_in_unit(explosive_kg: float, volume_m3: float, density_t_m3: float, unit: str) -> float:
+    """Actual PF computed directly in the requested unit ('kg/t' or 'kg/m³')."""
+    if unit == PF_KG_PER_T:
+        return pf_per_tonne(explosive_kg, rock_tonnage(volume_m3, density_t_m3))
+    if unit == PF_KG_PER_M3:
+        return pf_per_m3(explosive_kg, volume_m3)
+    raise ValueError(f"Unknown PF unit '{unit}'.")
+
+
+def target_pf_to_kg_m3(pf_target: float, unit: str, density_t_m3: float) -> float:
+    """Normalise a target PF given in `unit` to kg/m³ for charge sizing."""
+    if unit == PF_KG_PER_M3:
+        return pf_target
+    if unit == PF_KG_PER_T:
+        return pf_kg_t_to_kg_m3(pf_target, density_t_m3)
+    raise ValueError(f"Unknown PF unit '{unit}'.")
+
+
+def pf_status(actual: float, target: float, tolerance: float = 0.10) -> str:
+    """
+    Compare actual and target PF — both MUST be in the same unit.
+
+    Returns 'low' (< target x (1-tol)), 'high' (> target x (1+tol)) or 'ok'.
+    """
+    if actual < target * (1 - tolerance):
+        return "low"
+    if actual > target * (1 + tolerance):
+        return "high"
+    return "ok"
+
+
+def validate_inputs(
+    *,
+    burden: float,
+    spacing: float,
+    bench_height: float,
+    sub_drill: float,
+    stemming_m: float,
+    hole_diameter: float,
+    density: float,
+    pf_target: float,
+    pf_unit: str,
+    target_tons: float,
+) -> list[str]:
+    """Return a list of blocking input errors (empty if inputs are usable)."""
+    errors: list[str] = []
+    for name, value in (
+        ("Banquette (B)", burden), ("Espacement (S)", spacing),
+        ("Hauteur de gradin (H)", bench_height), ("Diamètre", hole_diameter),
+        ("Densité", density), ("Charge spécifique", pf_target),
+        ("Tonnage cible", target_tons),
+    ):
+        if value is None or value <= 0:
+            errors.append(f"{name} doit être strictement positif.")
+    if sub_drill < 0 or stemming_m < 0:
+        errors.append("Surforation et bourrage ne peuvent pas être négatifs.")
+    if pf_unit not in PF_UNITS:
+        errors.append(f"Unité de charge spécifique inconnue : {pf_unit}.")
+    if not errors:
+        if not 1.0 <= density <= 4.5:
+            errors.append("Densité de roche irréaliste (attendu 1–4.5 t/m³).")
+        if not 30 <= hole_diameter <= 250:
+            errors.append("Diamètre de foration irréaliste (attendu 30–250 mm).")
+        if stemming_m >= bench_height + sub_drill:
+            errors.append("Le bourrage dépasse la profondeur du trou.")
+    return errors
 
 
 # ---------------------------------------------------------------------------
@@ -28,14 +196,21 @@ class BlastGeometry:
     spacing: float               # m
     hole_diameter: int           # mm
     safety_gap: float            # m — clearance between stemming and charge
+    pattern: str = PATTERN_RECTANGULAR  # see PATTERN_FACTORS
 
     @property
     def hole_depth(self) -> float:
         return self.bench_height + self.sub_drill
 
     @property
+    def area_per_hole(self) -> float:
+        """Effective plan area per hole (m²)."""
+        return area_per_hole(self.burden, self.spacing, self.pattern)
+
+    @property
     def rock_volume_per_hole(self) -> float:
-        return self.burden * self.spacing * self.bench_height
+        """Rock volume per hole (m³) = effective area x bench height."""
+        return rock_volume_per_hole(self.area_per_hole, self.bench_height)
 
     @property
     def charge_length_available(self) -> float:
@@ -45,8 +220,9 @@ class BlastGeometry:
     @property
     def linear_charge_density(self) -> float:
         """Maximum kg of Ammonix per metre for this hole diameter."""
-        radius_m = (self.hole_diameter / 1000) / 2
-        return math.pi * radius_m ** 2 * AMMONIX_BULK_DENSITY
+        return explosive_capacity_kg(
+            hole_volume_per_meter(self.hole_diameter), AMMONIX_BULK_DENSITY
+        )
 
     @property
     def max_ammonix_capacity(self) -> float:
@@ -101,7 +277,8 @@ def compute_charges(
     Parameters
     ----------
     geom:              BlastGeometry instance for the current design.
-    pf_target:         Target powder factor (kg/m³).
+    pf_target:         Target powder factor in kg/m³ (convert kg/t first
+                       with target_pf_to_kg_m3).
     emulsion_per_hole: Booster charge per hole (kg).  Set by the operator.
     """
     total_explosive_per_hole = geom.rock_volume_per_hole * pf_target
@@ -120,7 +297,9 @@ def compute_fleet(
     target_tons: float,
 ) -> BlastFleet:
     """Compute fleet-level totals (number of holes, drill metres, explosive kg)."""
-    tonnage_per_hole = geom.rock_volume_per_hole * density_val
+    if target_tons <= 0 or density_val <= 0:
+        raise ValueError("Target tonnage and density must be strictly positive.")
+    tonnage_per_hole = rock_tonnage(geom.rock_volume_per_hole, density_val)
     num_holes = int(math.ceil(target_tons / tonnage_per_hole))
 
     return BlastFleet(

@@ -12,7 +12,8 @@ pip install -r requirements-dev.txt && python -m pytest   # core-math tests
 ```
 
 `app.py` is the UI, `utils/calculations.py` holds all formulas (no Streamlit
-imports), `utils/plots.py` the diagrams, `utils/config.py` geology profiles.
+imports), `utils/plots.py` the diagrams, `utils/report.py` the PDF report,
+`utils/config.py` geology profiles.
 `blastcalc.py` is a legacy single-file version, kept untouched.
 
 ## Unit model
@@ -39,6 +40,24 @@ imports), `utils/plots.py` the diagrams, `utils/config.py` geology profiles.
 - Tonnage = volume × rock density
 - PF (kg/m³) = explosive ÷ volume; PF (kg/t) = explosive ÷ tonnage
 - kg/m³ = kg/t × density; kg/t = kg/m³ ÷ density
+- Number of holes = ⌈target tonnage ÷ tonnage per hole⌉; blasted tonnage = holes × t/hole
+- Cost per tonne = total cost HT ÷ blasted tonnage
+
+## Hole loading (physical capacity)
+
+- Available charge length = hole depth (H + J) − stemming − air deck
+- Ammonix linear charge = hole m³/m × 850 kg/m³ (89 mm → 5.29 kg/m)
+- Emulsion booster sits at the bottom; its length = kg ÷ (hole m³/m × 1 150 kg/m³)
+- Ammonix capacity = (available length − booster length) × Ammonix linear charge
+- Ammonix loaded = min(required by the target PF − booster, capacity). When the
+  hole cannot hold the target charge a **CRITIQUE** alert is raised, the loaded
+  quantities/costs reflect what physically fits and the actual PF is reported
+  "low" — reduce B × S, increase Ø or reduce stemming.
+- When the charge is below capacity the stemming is longer than the minimum
+  entered; the cross-section is drawn to scale and shows the effective stemming.
+
+Geology recommendations (B × S, PF) are sized to be loadable in the default
+hole (Ø 89 mm, H 10 m, J 1 m, stemming 2.5 m, 2 kg booster ≈ 45 kg/hole max).
 
 ## Pattern assumptions
 
@@ -69,4 +88,4 @@ Worked example (regression test): 520 m drilled × 13.75 m²/hole = 7 150 m³ �
 ## Input validation
 
 Non-positive values, unrealistic density (1–4.5 t/m³) or diameter (30–250 mm), and
-stemming deeper than the hole stop the calculation with an explicit message.
+stemming (+ air deck) reaching the hole bottom stop the calculation with an explicit message.

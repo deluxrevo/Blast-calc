@@ -15,12 +15,6 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-
 from utils.config import (
     GEOLOGY_PROFILES,
     APP_TITLE,
@@ -47,6 +41,7 @@ from utils.calculations import (
     get_technical_alerts,
 )
 from utils.plots import plot_blast_pattern, plot_hole_cross_section
+from utils.report import ReportData, build_technical_report
 
 # ---------------------------------------------------------------------------
 # PAGE CONFIGURATION
@@ -202,14 +197,19 @@ pf_unit: str = st.sidebar.radio(
 )
 if pf_unit == PF_KG_PER_T:
     pf_target: float = st.sidebar.number_input(
-        "Charge Spécifique cible (q) [kg/t]", 0.05, 0.60,
-        round(pf_kg_m3_to_kg_t(rec_pf, density_val), 2), 0.01,
+        "Charge Spécifique cible (q) [kg/t]", 0.020, 0.600,
+        round(pf_kg_m3_to_kg_t(rec_pf, density_val), 3), 0.005,
+        format="%.3f",
         key=f"pf_{geology_type}_kgt",
+        help=f"Recommandation : {rec_pf:.2f} kg/m³ = "
+             f"{pf_kg_m3_to_kg_t(rec_pf, density_val):.3f} kg/t (densité {density_val} t/m³).",
     )
 else:
     pf_target = st.sidebar.number_input(
-        "Charge Spécifique cible (q) [kg/m³]", 0.15, 1.2, rec_pf, 0.01,
+        "Charge Spécifique cible (q) [kg/m³]", 0.05, 1.50, rec_pf, 0.01,
+        format="%.3f",
         key=f"pf_{geology_type}_kgm3",
+        help=f"Recommandation : {rec_pf:.2f} kg/m³.",
     )
 sub_drill: float = st.sidebar.number_input("Surforation (J) [m]", 0.0, 2.0, 1.0, 0.1)
 stemming_m: float = st.sidebar.number_input("Bourrage (T) [m]", 1.0, 5.0, 2.5, 0.1)
@@ -259,7 +259,7 @@ input_errors = validate_inputs(
     burden=burden, spacing=spacing, bench_height=bench_height,
     sub_drill=sub_drill, stemming_m=stemming_m, hole_diameter=hole_diameter,
     density=density_val, pf_target=pf_target, pf_unit=pf_unit,
-    target_tons=target_tons,
+    target_tons=target_tons, safety_gap=safety_gap,
 )
 if input_errors:
     for err in input_errors:
@@ -301,194 +301,31 @@ fig_hole = plot_hole_cross_section(geom, charges)
 
 def generate_technical_report() -> BytesIO:
     """Build and return a BytesIO buffer containing the full PDF technical report."""
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4,
-        rightMargin=2 * cm, leftMargin=2 * cm,
-        topMargin=2 * cm, bottomMargin=2 * cm,
-    )
-    elements = []
-    styles = getSampleStyleSheet()
-    cell_style = ParagraphStyle(
-        "CellText", parent=styles["Normal"], fontSize=9, leading=11, wordWrap="CJK",
-    )
-
-    # ── Header ──────────────────────────────────────────────────────────────
-    elements.append(Paragraph("RAPPORT TECHNIQUE DE TIR", styles["Title"]))
-    elements.append(Paragraph(
-        f"<b>Site :</b> {SITE_NAME} &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"<b>Date :</b> {pd.Timestamp.now().strftime('%d/%m/%Y')}",
-        styles["Normal"],
+    return build_technical_report(ReportData(
+        site_name=SITE_NAME,
+        geology_type=geology_type,
+        rock_hardness=rock_hardness,
+        quality_note=quality_note,
+        clay_risk=clay_risk,
+        density=density_val,
+        target_tons=target_tons,
+        pattern_label=pattern_label,
+        geom=geom,
+        charges=charges,
+        fleet=fleet,
+        costs=costs,
+        pf_target=pf_target,
+        pf_actual=pf_actual,
+        pf_unit=pf_unit,
+        pf_state=pf_state,
+        cost_drill_per_m=cost_drill_per_m,
+        cost_ammonix_per_kg=cost_ammonix_per_kg,
+        cost_emulsion_per_kg=cost_emulsion_per_kg,
+        cost_detonator_each=cost_detonator_each,
+        fig_plan=fig_plan,
+        fig_hole=fig_hole,
+        alerts=alerts,
     ))
-    elements.append(Paragraph(
-        f"<b>Opérateur :</b> Admin &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"<b>Ref :</b> BL-{pd.Timestamp.now().strftime('%Y%m%d')}",
-        styles["Normal"],
-    ))
-    elements.append(Spacer(1, 1 * cm))
-
-    # ── Section 1: Technical Summary ────────────────────────────────────────
-    elements.append(Paragraph("<b>SYNTHÈSE TECHNIQUE</b>", styles["Heading3"]))
-    data_synth = [
-        ["PARAMÈTRE", "VALEUR", "NOTES TECHNIQUE"],
-        ["Objectif Tonnage",
-         Paragraph(f"{target_tons:,.0f} T", cell_style),
-         Paragraph(f"Densité retenue : {density_val} t/m³", cell_style)],
-        ["Géométrie (B × S)",
-         Paragraph(f"{burden} m × {spacing} m", cell_style),
-         Paragraph(f"Maille : {burden * spacing:.1f} m²", cell_style)],
-        ["Charge Spécifique",
-         Paragraph(f"{pf_target:.2f} {pf_unit} (réel {pf_actual:.2f} {pf_unit})", cell_style),
-         Paragraph(f"Dureté : {rock_hardness}", cell_style)],
-        ["Foration Totale",
-         Paragraph(f"{fleet.total_drill_meters:,.0f} m", cell_style),
-         Paragraph(f"{fleet.num_holes} Trous (Ø {hole_diameter} mm)", cell_style)],
-        ["Qualité Attendue",
-         Paragraph(quality_note, cell_style),
-         Paragraph(f"Risque Argile : {clay_risk}", cell_style)],
-    ]
-    t_synth = Table(data_synth, colWidths=[4 * cm, 7 * cm, 6 * cm])
-    t_synth.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), "#004085"),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("PADDING", (0, 0), (-1, -1), 8),
-    ]))
-    elements.append(t_synth)
-    elements.append(Spacer(1, 1 * cm))
-
-    # ── Section 2: Explosive Quantities Detail ───────────────────────────────
-    elements.append(Paragraph("<b>DÉTAIL DES QUANTITÉS D'EXPLOSIFS</b>", styles["Heading3"]))
-    data_expl = [
-        ["EXPLOSIF", "QUANTITÉ / TROU", "QUANTITÉ TOTALE", "COÛT UNITAIRE", "COÛT TOTAL (HT)"],
-        [
-            Paragraph("<b>Ammonix (ANFO)</b>", cell_style),
-            Paragraph(f"{charges.ammonix_per_hole:.2f} kg/trou", cell_style),
-            Paragraph(f"<b>{fleet.total_ammonix_kg:,.1f} kg</b>", cell_style),
-            Paragraph(f"{cost_ammonix_per_kg:.2f} DH/kg", cell_style),
-            Paragraph(f"{costs.cost_ammonix_total:,.0f} DH", cell_style),
-        ],
-        [
-            Paragraph("<b>Émulsion (Booster)</b>", cell_style),
-            Paragraph(f"{charges.emulsion_per_hole:.2f} kg/trou", cell_style),
-            Paragraph(f"<b>{fleet.total_emulsion_kg:,.1f} kg</b>", cell_style),
-            Paragraph(f"{cost_emulsion_per_kg:.2f} DH/kg", cell_style),
-            Paragraph(f"{costs.cost_emulsion_total:,.0f} DH", cell_style),
-        ],
-        [
-            Paragraph("<b>TOTAL EXPLOSIFS</b>", cell_style),
-            Paragraph(f"{charges.total_explosive_per_hole:.2f} kg/trou", cell_style),
-            Paragraph(f"<b>{fleet.total_explosive_kg:,.1f} kg</b>", cell_style),
-            "",
-            Paragraph(
-                f"<b>{costs.cost_ammonix_total + costs.cost_emulsion_total:,.0f} DH</b>",
-                cell_style,
-            ),
-        ],
-    ]
-    t_expl = Table(data_expl, colWidths=[4 * cm, 3.5 * cm, 3.5 * cm, 3 * cm, 3 * cm])
-    t_expl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), "#17375e"),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-        ("PADDING", (0, 0), (-1, -1), 7),
-        ("BACKGROUND", (0, 3), (-1, 3), "#dce6f1"),
-    ]))
-    elements.append(t_expl)
-    elements.append(Spacer(1, 1 * cm))
-
-    # ── Section 3: Blast Pattern Diagram ─────────────────────────────────────
-    img_buf = BytesIO()
-    fig_plan.savefig(img_buf, format="png", dpi=100, bbox_inches="tight")
-    img_buf.seek(0)
-    elements.append(Image(img_buf, width=14 * cm, height=10 * cm))
-    elements.append(Spacer(1, 1 * cm))
-
-    # ── Section 4: Hole Cross-Section ────────────────────────────────────────
-    elements.append(Paragraph("<b>COUPE TRANSVERSALE DU TROU DE TIR</b>", styles["Heading3"]))
-    hole_img_buf = BytesIO()
-    fig_hole.savefig(hole_img_buf, format="png", dpi=120, bbox_inches="tight")
-    hole_img_buf.seek(0)
-    elements.append(Image(hole_img_buf, width=8 * cm, height=16 * cm))
-    elements.append(Spacer(1, 1 * cm))
-
-    # ── Section 5: Budget Estimate ────────────────────────────────────────────
-    elements.append(Paragraph("<b>ESTIMATION BUDGÉTAIRE PRÉVISIONNELLE</b>", styles["Heading3"]))
-    data_cost = [
-        ["POSTE DE DÉPENSE", "DÉTAIL QUANTITÉ", "MONTANT (HT)", "% DU TOTAL"],
-        [
-            "Foration",
-            Paragraph(
-                f"{fleet.total_drill_meters:,.0f} m @ {cost_drill_per_m:.0f} DH/m",
-                cell_style,
-            ),
-            Paragraph(f"{costs.cost_drilling:,.0f} DH", cell_style),
-            f"{costs.cost_drilling / costs.total_cost_ht * 100:.1f}%",
-        ],
-        [
-            Paragraph("<b>Ammonix (ANFO)</b>", cell_style),
-            Paragraph(
-                f"{fleet.total_ammonix_kg:,.1f} kg @ {cost_ammonix_per_kg:.2f} DH/kg",
-                cell_style,
-            ),
-            Paragraph(f"{costs.cost_ammonix_total:,.0f} DH", cell_style),
-            f"{costs.cost_ammonix_total / costs.total_cost_ht * 100:.1f}%",
-        ],
-        [
-            Paragraph("<b>Émulsion (Booster)</b>", cell_style),
-            Paragraph(
-                f"{fleet.total_emulsion_kg:,.1f} kg @ {cost_emulsion_per_kg:.2f} DH/kg",
-                cell_style,
-            ),
-            Paragraph(f"{costs.cost_emulsion_total:,.0f} DH", cell_style),
-            f"{costs.cost_emulsion_total / costs.total_cost_ht * 100:.1f}%",
-        ],
-        [
-            "Accessoires & Frais Fixes",
-            Paragraph(f"{fleet.num_holes} détonateurs + fixes", cell_style),
-            Paragraph(f"{costs.cost_accessories + costs.fixed_fees:,.0f} DH", cell_style),
-            f"{(costs.cost_accessories + costs.fixed_fees) / costs.total_cost_ht * 100:.1f}%",
-        ],
-        [
-            Paragraph("<b>TOTAL HT</b>", cell_style),
-            "",
-            Paragraph(f"<b>{costs.total_cost_ht:,.0f} DH</b>", cell_style),
-            "100%",
-        ],
-        [
-            "COÛT UNITAIRE",
-            "",
-            Paragraph(f"{costs.cost_per_ton:.2f} DH/T", cell_style),
-            "—",
-        ],
-    ]
-    t_cost = Table(data_cost, colWidths=[4.5 * cm, 5.5 * cm, 3.5 * cm, 3.5 * cm])
-    t_cost.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), "#e9ecef"),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("PADDING", (0, 0), (-1, -1), 6),
-        ("BACKGROUND", (0, 5), (-1, 6), "#d4edda"),
-    ]))
-    elements.append(t_cost)
-
-    # ── Footer ────────────────────────────────────────────────────────────────
-    elements.append(Spacer(1, 1 * cm))
-    elements.append(Paragraph(
-        "<i>Document généré automatiquement par le système SGT. Validé pour exécution.</i>",
-        styles["Italic"],
-    ))
-
-    doc.build(elements)
-    buffer.seek(0)
-    return buffer
 
 
 # ---------------------------------------------------------------------------
@@ -503,9 +340,14 @@ st.markdown("---")
 
 # ── Top KPI metrics ──────────────────────────────────────────────────────────
 m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("🎯 Production Cible", f"{target_tons / 1000:.1f} kT")
+m1.metric(
+    "🎯 Production Cible", f"{target_tons / 1000:.1f} kT",
+    f"Abattu : {fleet.total_tonnage / 1000:.2f} kT",
+    delta_color="off",
+    help="Tonnage réellement abattu = nombre de trous (arrondi au supérieur) × tonnage par trou.",
+)
 m2.metric(
-    "📐 Maille de Tir", f"{burden} × {spacing} m",
+    "📐 Maille de Tir", f"{burden:.2f} × {spacing:.2f} m",
     f"{geom.area_per_hole:.2f} m²/trou · {geom.rock_volume_per_hole:.1f} m³/trou",
     delta_color="off",
     help="Surface effective par trou et volume de roche par trou (surface × hauteur de gradin).",
@@ -517,20 +359,27 @@ m3.metric(
     help="Explosif chargé (Ammonix + Émulsion) / roche abattue, dans l'unité choisie.",
 )
 m4.metric("🕳️ Nombre de Trous", f"{fleet.num_holes}")
-m5.metric("💰 Coût Unitaire", f"{costs.cost_per_ton:.2f} DH/T", delta_color="inverse")
+m5.metric(
+    "💰 Coût Unitaire", f"{costs.cost_per_ton:.2f} DH/T",
+    help="Coût total HT / tonnage abattu.",
+)
 
 st.markdown("---")
 
 # ── Technical alerts ─────────────────────────────────────────────────────────
 if pf_state == "low":
+    reason = (
+        " — le trou ne peut pas contenir la charge requise (charge limitée à sa capacité)."
+        if charges.capacity_limited else "."
+    )
     st.warning(
         f"⚠️ Charge spécifique réelle ({pf_actual:.3f} {pf_unit}) inférieure à la cible "
-        f"({pf_target:.3f} {pf_unit})."
+        f"({pf_target:.3f} {pf_unit}){reason}"
     )
 elif pf_state == "high":
     st.warning(
         f"⚠️ Charge spécifique réelle ({pf_actual:.3f} {pf_unit}) supérieure à la cible "
-        f"({pf_target:.3f} {pf_unit}) — l'émulsion minimale dépasse la charge cible."
+        f"({pf_target:.3f} {pf_unit}) — l'émulsion seule dépasse la charge cible."
     )
 else:
     st.success(
@@ -577,6 +426,10 @@ with tab1:
         "Charge Totale / Trou",
         f"{charges.total_explosive_per_hole:.2f} kg",
         f"Total : {fleet.total_explosive_kg:,.0f} kg",
+        help=(
+            f"Charge requise par la cible : {charges.target_explosive_per_hole:.2f} kg/trou. "
+            f"Capacité Ammonix du trou : {charges.ammonix_capacity:.2f} kg."
+        ),
     )
     exp_col4.metric(
         "Foration Totale",
@@ -615,7 +468,10 @@ with tab2:
     fin_col1, fin_col2, fin_col3 = st.columns(3)
     fin_col1.metric("💵 Total HT", f"{costs.total_cost_ht:,.0f} DH")
     fin_col2.metric("🧾 Total TTC (TVA 20%)", f"{costs.total_cost_ttc:,.0f} DH")
-    fin_col3.metric("📦 Coût / Tonne", f"{costs.cost_per_ton:.2f} DH/T")
+    fin_col3.metric(
+        "📦 Coût / Tonne (HT)", f"{costs.cost_per_ton:.2f} DH/T",
+        f"sur {fleet.total_tonnage:,.0f} t abattues", delta_color="off",
+    )
 
     st.markdown("---")
     df_costs = pd.DataFrame({

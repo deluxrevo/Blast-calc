@@ -10,7 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from utils.config import AMMONIX_BULK_DENSITY
+from utils.config import AMMONIX_BULK_DENSITY, EMULSION_DENSITY
 
 # ---------------------------------------------------------------------------
 # UNIT MODEL
@@ -157,6 +157,7 @@ def validate_inputs(
     pf_target: float,
     pf_unit: str,
     target_tons: float,
+    safety_gap: float = 0.0,
 ) -> list[str]:
     """Return a list of blocking input errors (empty if inputs are usable)."""
     errors: list[str] = []
@@ -168,8 +169,8 @@ def validate_inputs(
     ):
         if value is None or value <= 0:
             errors.append(f"{name} doit être strictement positif.")
-    if sub_drill < 0 or stemming_m < 0:
-        errors.append("Surforation et bourrage ne peuvent pas être négatifs.")
+    if sub_drill < 0 or stemming_m < 0 or safety_gap < 0:
+        errors.append("Surforation, bourrage et tampon ne peuvent pas être négatifs.")
     if pf_unit not in PF_UNITS:
         errors.append(f"Unité de charge spécifique inconnue : {pf_unit}.")
     if not errors:
@@ -177,8 +178,11 @@ def validate_inputs(
             errors.append("Densité de roche irréaliste (attendu 1–4.5 t/m³).")
         if not 30 <= hole_diameter <= 250:
             errors.append("Diamètre de foration irréaliste (attendu 30–250 mm).")
-        if stemming_m >= bench_height + sub_drill:
-            errors.append("Le bourrage dépasse la profondeur du trou.")
+        if stemming_m + safety_gap >= bench_height + sub_drill:
+            errors.append(
+                "Le bourrage (+ tampon) atteint ou dépasse la profondeur du trou : "
+                "aucune longueur disponible pour la charge."
+            )
     return errors
 
 
@@ -225,17 +229,45 @@ class BlastGeometry:
         )
 
     @property
+    def emulsion_linear_density(self) -> float:
+        """kg of emulsion per metre of hole (booster assumed to fill the hole)."""
+        return explosive_capacity_kg(
+            hole_volume_per_meter(self.hole_diameter), EMULSION_DENSITY
+        )
+
+    def emulsion_length(self, emulsion_kg: float) -> float:
+        """Length of hole (m) occupied by the bottom booster."""
+        return emulsion_kg / self.emulsion_linear_density
+
+    def ammonix_length(self, ammonix_kg: float) -> float:
+        """Length of hole (m) occupied by a given Ammonix mass."""
+        return ammonix_kg / self.linear_charge_density
+
+    @property
     def max_ammonix_capacity(self) -> float:
-        """Maximum Ammonix that physically fits in the charge column (kg)."""
+        """Ammonix that would fit if the whole charge column were Ammonix (kg)."""
         return self.charge_length_available * self.linear_charge_density
+
+    def ammonix_capacity(self, emulsion_kg: float) -> float:
+        """Ammonix that physically fits above the booster, below the stemming (kg)."""
+        free_length = self.charge_length_available - self.emulsion_length(emulsion_kg)
+        return max(0.0, free_length) * self.linear_charge_density
 
 
 @dataclass
 class BlastCharges:
-    """Explosive quantities per hole."""
-    total_explosive_per_hole: float   # kg
+    """Explosive quantities per hole (loaded = what physically fits in the hole)."""
+    total_explosive_per_hole: float   # kg — loaded (Ammonix + Émulsion)
     emulsion_per_hole: float          # kg
-    ammonix_per_hole: float           # kg
+    ammonix_per_hole: float           # kg — loaded, capped at hole capacity
+    target_explosive_per_hole: float = 0.0  # kg — required by the target PF
+    ammonix_required: float = 0.0     # kg — Ammonix required by the target PF
+    ammonix_capacity: float = 0.0     # kg — Ammonix that fits in the hole
+
+    @property
+    def capacity_limited(self) -> bool:
+        """True when the hole cannot hold the Ammonix required by the target PF."""
+        return self.ammonix_required > self.ammonix_capacity + 1e-9
 
 
 @dataclass
@@ -247,6 +279,7 @@ class BlastFleet:
     total_emulsion_kg: float
     total_explosive_kg: float
     total_rock_volume: float
+    total_tonnage: float = 0.0       # t — rock actually blasted (≥ target)
 
 
 @dataclass
@@ -280,13 +313,22 @@ def compute_charges(
     pf_target:         Target powder factor in kg/m³ (convert kg/t first
                        with target_pf_to_kg_m3).
     emulsion_per_hole: Booster charge per hole (kg).  Set by the operator.
+
+    The Ammonix actually loaded is capped at what physically fits between the
+    booster and the stemming; the loaded total is therefore always consistent
+    with the drawn column and the fleet totals.
     """
-    total_explosive_per_hole = geom.rock_volume_per_hole * pf_target
-    ammonix_per_hole = max(0.0, total_explosive_per_hole - emulsion_per_hole)
+    target_explosive = geom.rock_volume_per_hole * pf_target
+    ammonix_required = max(0.0, target_explosive - emulsion_per_hole)
+    capacity = geom.ammonix_capacity(emulsion_per_hole)
+    ammonix_per_hole = min(ammonix_required, capacity)
     return BlastCharges(
-        total_explosive_per_hole=total_explosive_per_hole,
+        total_explosive_per_hole=ammonix_per_hole + emulsion_per_hole,
         emulsion_per_hole=emulsion_per_hole,
         ammonix_per_hole=ammonix_per_hole,
+        target_explosive_per_hole=target_explosive,
+        ammonix_required=ammonix_required,
+        ammonix_capacity=capacity,
     )
 
 
@@ -300,15 +342,17 @@ def compute_fleet(
     if target_tons <= 0 or density_val <= 0:
         raise ValueError("Target tonnage and density must be strictly positive.")
     tonnage_per_hole = rock_tonnage(geom.rock_volume_per_hole, density_val)
-    num_holes = int(math.ceil(target_tons / tonnage_per_hole))
+    # round() guards against float noise turning an exact count (e.g. 58.0000001) into +1
+    num_holes = max(1, int(math.ceil(round(target_tons / tonnage_per_hole, 9))))
 
     return BlastFleet(
         num_holes=num_holes,
         total_drill_meters=num_holes * geom.hole_depth,
         total_ammonix_kg=num_holes * charges.ammonix_per_hole,
         total_emulsion_kg=num_holes * charges.emulsion_per_hole,
-        total_explosive_kg=num_holes * (charges.ammonix_per_hole + charges.emulsion_per_hole),
+        total_explosive_kg=num_holes * charges.total_explosive_per_hole,
         total_rock_volume=num_holes * geom.rock_volume_per_hole,
+        total_tonnage=num_holes * tonnage_per_hole,
     )
 
 
@@ -322,7 +366,13 @@ def compute_costs(
     cost_detonator_each: float,
     fixed_fees: float,
 ) -> CostBreakdown:
-    """Compute the full cost breakdown for the blast operation."""
+    """
+    Compute the full cost breakdown for the blast operation.
+
+    Cost per tonne is based on the tonnage actually blasted by the drilled
+    holes (fleet.total_tonnage, ≥ target because the hole count is rounded up);
+    `target_tons` is only used as a fallback.
+    """
     cost_drilling = fleet.total_drill_meters * cost_drill_per_m
     cost_ammonix_total = fleet.total_ammonix_kg * cost_ammonix_per_kg
     cost_emulsion_total = fleet.total_emulsion_kg * cost_emulsion_per_kg
@@ -332,7 +382,8 @@ def compute_costs(
         + cost_accessories + fixed_fees
     )
     total_cost_ttc = total_cost_ht * 1.20
-    cost_per_ton = total_cost_ht / target_tons if target_tons > 0 else 0.0
+    tonnage = fleet.total_tonnage if fleet.total_tonnage > 0 else target_tons
+    cost_per_ton = total_cost_ht / tonnage if tonnage > 0 else 0.0
 
     return CostBreakdown(
         cost_drilling=cost_drilling,
@@ -353,10 +404,19 @@ def get_technical_alerts(
     """Return a list of technical warning messages for the current design."""
     alerts: list[str] = []
 
-    if charges.ammonix_per_hole > geom.max_ammonix_capacity:
+    available = geom.charge_length_available
+    booster_len = geom.emulsion_length(charges.emulsion_per_hole)
+    if booster_len > available:
         alerts.append(
-            f"CRITIQUE: Surcharge Explosive. Capacité trou ({geom.max_ammonix_capacity:.1f} kg) "
-            f"< Besoin ({charges.ammonix_per_hole:.1f} kg)."
+            f"CRITIQUE: L'émulsion ({charges.emulsion_per_hole:.1f} kg, soit {booster_len:.2f} m) "
+            f"dépasse la longueur de charge disponible ({available:.2f} m)."
+        )
+    elif charges.capacity_limited:
+        alerts.append(
+            f"CRITIQUE: Surcharge Explosive. Capacité Ammonix du trou "
+            f"({charges.ammonix_capacity:.1f} kg) < Besoin ({charges.ammonix_required:.1f} kg). "
+            f"Charge limitée à la capacité : réduire la maille, augmenter le diamètre "
+            f"ou réduire le bourrage."
         )
     if geom.burden > geom.spacing:
         alerts.append(

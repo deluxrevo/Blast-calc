@@ -10,11 +10,14 @@ from __future__ import annotations
 # GEOLOGY PROFILES
 # ---------------------------------------------------------------------------
 
+# Recommended B x S are sized so that rec_pf (kg/m³) can physically be loaded
+# in the default hole (Ø 89 mm, H = 10 m, J = 1 m, T = 2.5 m, 2 kg booster):
+# ~45 kg/hole max  ->  B x S x H x rec_pf must stay below that.
 GEOLOGY_PROFILES: dict[str, dict[str, str | float]] = {
     "Gréso-Pélitique (Viséen)": {
         "rec_pf": 0.55,
-        "rec_burden": 3.5,
-        "rec_spacing": 4.0,
+        "rec_burden": 2.7,
+        "rec_spacing": 3.0,
         "rock_hardness": "Moyenne/Dure",
         "abrasivity": "Moyenne",
         "density": 2.70,
@@ -23,8 +26,8 @@ GEOLOGY_PROFILES: dict[str, dict[str, str | float]] = {
     },
     "Psammites (Ordovicien)": {
         "rec_pf": 0.65,
-        "rec_burden": 3.2,
-        "rec_spacing": 3.8,
+        "rec_burden": 2.5,
+        "rec_spacing": 2.7,
         "rock_hardness": "TRÈS DURE",
         "abrasivity": "Élevée (Usure foration)",
         "density": 2.75,
@@ -47,8 +50,8 @@ GEOLOGY_PROFILES: dict[str, dict[str, str | float]] = {
     },
     "Zone de Faille / Altérée": {
         "rec_pf": 0.50,
-        "rec_burden": 3.5,
-        "rec_spacing": 4.0,
+        "rec_burden": 2.8,
+        "rec_spacing": 3.2,
         "rock_hardness": "Faible",
         "abrasivity": "Faible",
         "density": 2.50,
@@ -67,6 +70,10 @@ SITE_NAME = "Carrière Benslimane"
 
 # Ammonix bulk density (kg/m³) used for linear charge capacity
 AMMONIX_BULK_DENSITY: float = 850.0
+
+# Emulsion (booster) density (kg/m³). Used only to estimate the length of hole
+# occupied by the booster at the bottom of the column (assumed to fill the hole).
+EMULSION_DENSITY: float = 1150.0
 
 # Default emulsion booster charge per hole (kg) — 2 cartridges of Emulcad E5 1000 g
 DEFAULT_EMULSION_KG: float = 2.0

@@ -2,6 +2,8 @@ import math
 
 import pytest
 
+from utils.config import DEFAULT_EMULSION_KG, DEFAULT_SAFETY_GAP_M, GEOLOGY_PROFILES
+
 from utils.calculations import (
     BlastGeometry,
     PATTERN_CENTER_HOLE,
@@ -11,7 +13,9 @@ from utils.calculations import (
     PF_KG_PER_T,
     area_per_hole,
     compute_charges,
+    compute_costs,
     compute_fleet,
+    get_technical_alerts,
     explosive_capacity_kg,
     hole_volume_per_meter,
     pf_in_unit,
@@ -80,18 +84,81 @@ def test_regression_target_025_kg_per_t_actual_below_target():
     assert pf_status(0.40, 0.25) == "high"
 
 
-def test_charges_and_fleet_match_target_pf():
-    geom = BlastGeometry(
+def _centre_hole_geom(**kw):
+    params = dict(
         bench_height=10, sub_drill=1, stemming_m=2.5, burden=5, spacing=5.5,
         hole_diameter=89, safety_gap=0, pattern=PATTERN_CENTER_HOLE,
     )
+    params.update(kw)
+    return BlastGeometry(**params)
+
+
+def test_charges_and_fleet_match_target_pf():
+    geom = _centre_hole_geom()
     assert geom.area_per_hole == pytest.approx(13.75)
-    pf_m3 = target_pf_to_kg_m3(0.25, PF_KG_PER_T, 2.5)
+    pf_m3 = target_pf_to_kg_m3(0.12, PF_KG_PER_T, 2.5)   # 41.25 kg/hole: fits in 89 mm
     charges = compute_charges(geom, pf_m3, emulsion_per_hole=2.0)
+    assert not charges.capacity_limited
+    assert charges.total_explosive_per_hole == pytest.approx(41.25)
     fleet = compute_fleet(geom, charges, 2.5, 20000)
     actual = pf_in_unit(fleet.total_explosive_kg, fleet.total_rock_volume, 2.5, PF_KG_PER_T)
-    assert actual == pytest.approx(0.25)
+    assert actual == pytest.approx(0.12)
     assert fleet.num_holes == math.ceil(20000 / (137.5 * 2.5))
+    assert fleet.total_tonnage == pytest.approx(fleet.num_holes * 137.5 * 2.5)
+    assert fleet.total_tonnage >= 20000
+
+
+def test_charge_capped_at_hole_capacity():
+    """0.25 kg/t on 137.5 m³ needs 85.9 kg; an 89 mm hole only holds ~45 kg."""
+    geom = _centre_hole_geom()
+    charges = compute_charges(geom, target_pf_to_kg_m3(0.25, PF_KG_PER_T, 2.5), 2.0)
+    assert charges.target_explosive_per_hole == pytest.approx(85.9375)
+    assert charges.capacity_limited
+    # booster length + Ammonix length == available charge column
+    loaded_len = geom.emulsion_length(2.0) + geom.ammonix_length(charges.ammonix_per_hole)
+    assert loaded_len == pytest.approx(geom.charge_length_available)
+    assert charges.total_explosive_per_hole == pytest.approx(charges.ammonix_per_hole + 2.0)
+    fleet = compute_fleet(geom, charges, 2.5, 20000)
+    actual = pf_in_unit(fleet.total_explosive_kg, fleet.total_rock_volume, 2.5, PF_KG_PER_T)
+    assert pf_status(actual, 0.25) == "low"
+    assert any("Surcharge" in a for a in get_technical_alerts(geom, charges))
+
+
+def test_emulsion_only_total_is_consistent():
+    """If the target is below the booster mass, the loaded total is the booster."""
+    geom = _centre_hole_geom()
+    charges = compute_charges(geom, 0.01, emulsion_per_hole=2.0)  # target 1.375 kg
+    assert charges.ammonix_per_hole == 0
+    assert charges.total_explosive_per_hole == pytest.approx(2.0)
+    fleet = compute_fleet(geom, charges, 2.5, 20000)
+    assert fleet.total_explosive_kg == pytest.approx(fleet.num_holes * 2.0)
+
+
+def test_hole_count_exact_division_not_rounded_up():
+    geom = BlastGeometry(10, 1, 2.5, 3.0, 3.0, 89, 0.0)  # 90 m³/hole
+    charges = compute_charges(geom, 0.3, 2.0)
+    fleet = compute_fleet(geom, charges, 2.7, 90 * 2.7 * 7)
+    assert fleet.num_holes == 7
+
+
+def test_cost_per_ton_uses_blasted_tonnage():
+    geom = _centre_hole_geom()
+    charges = compute_charges(geom, 0.3, 2.0)
+    fleet = compute_fleet(geom, charges, 2.5, 20000)
+    costs = compute_costs(fleet, charges, 20000, 28, 17.55, 46, 85, 7000)
+    assert costs.cost_per_ton == pytest.approx(costs.total_cost_ht / fleet.total_tonnage)
+    assert costs.total_cost_ttc == pytest.approx(costs.total_cost_ht * 1.2)
+
+
+def test_default_geology_designs_fit_the_hole():
+    """Recommended B x S and PF of each profile must be loadable in the default hole."""
+    for name, prof in GEOLOGY_PROFILES.items():
+        geom = BlastGeometry(
+            bench_height=10, sub_drill=1, stemming_m=2.5, burden=prof["rec_burden"],
+            spacing=prof["rec_spacing"], hole_diameter=89, safety_gap=DEFAULT_SAFETY_GAP_M,
+        )
+        charges = compute_charges(geom, prof["rec_pf"], DEFAULT_EMULSION_KG)
+        assert get_technical_alerts(geom, charges) == [], name
 
 
 def test_validation():
@@ -103,3 +170,6 @@ def test_validation():
     assert validate_inputs(**{**ok, "density": 0.2})
     assert validate_inputs(**{**ok, "stemming_m": 20})
     assert validate_inputs(**{**ok, "pf_unit": "x"})
+    # stemming + air deck leaving no room for the charge
+    assert validate_inputs(**{**ok, "stemming_m": 5, "safety_gap": 6})
+    assert validate_inputs(**{**ok, "safety_gap": -0.5})
